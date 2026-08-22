@@ -211,6 +211,21 @@ export default {
     // electron-updater skips the check when there is none. Adding a certificate
     // is then the whole change — the verification follows it.
   },
+  linux: {
+    target: [
+      { target: 'AppImage', arch: ['x64'] },
+    ],
+    artifactName: 'Maka-${version}-linux-${arch}.${ext}',
+    // The Linux launcher name is derived from the npm package name unless it is
+    // set here. `@maka/desktop` becomes `@makadesktop`, and the `@` is rejected
+    // by AppImage as unsafe in a file path, which fails the whole target.
+    executableName: 'maka',
+    // electron-builder cannot map the macOS category and silently falls back to
+    // "Utility"; name the freedesktop category explicitly instead.
+    category: 'Development',
+    icon: 'assets/icon.png',
+    synopsis: 'Local-first agent workspace',
+  },
   publish: [
     {
       provider: 'github',
