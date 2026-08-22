@@ -153,7 +153,7 @@ function historicalGraphSnapshot(graphId: string): AgentGraphClientSnapshot {
 }
 
 /** Catalog API-key providers as wizard entries with no existing connection —
- *  the default `/setup` provider list for tests that don't need 已设置 state. */
+ *  the default `/setup` provider list for tests that don't need configured-connection state. */
 function defaultOnboardingProviders(): OnboardingProviderEntry[] {
   return listApiKeyOnboardableProviders().map((provider) => ({
     ...provider,
@@ -220,6 +220,62 @@ describe('Maka Pi TUI runner', () => {
         throw new Error('TUI did not close during test cleanup');
       }),
     ]);
+  });
+
+  test('the /setup wizard renders its own copy in the resolved locale', async () => {
+    const openKeyPhase = async (locale: 'zh' | undefined): Promise<string> => {
+      const terminal = new FakeTerminal();
+      const driver = new SlashCommandDriver();
+      const run = runMakaPiTui({
+        title: 'Maka',
+        ...(locale ? { locale } : {}),
+        driver,
+        cwd: '/repo',
+        model: 'claude-sonnet-4-5',
+        connectionSlug: 'claude-subscription',
+        permissionMode: 'bypass',
+        terminal,
+        onboarding: fakeOnboardingSurface(),
+      });
+
+      await waitForTuiPaint(terminal);
+      terminal.input('/setup');
+      terminal.input('\r');
+      await waitFor(() => {
+        try {
+          return latestPlainLineContaining(terminal.writes.join(''), 'Set Up Provider') !== null;
+        } catch {
+          return false;
+        }
+      });
+      terminal.input('\r'); // provider -> key phase
+      await waitFor(() => {
+        try {
+          return latestPlainLineContaining(terminal.writes.join(''), 'API key') !== null;
+        } catch {
+          return false;
+        }
+      });
+      const output = plainTerminalOutput(terminal.screenOutput());
+
+      process.emit('SIGTERM');
+      await Promise.race([
+        run,
+        delay(CLOSE_BUDGET_MS).then(() => {
+          throw new Error('TUI did not close during test cleanup');
+        }),
+      ]);
+      return output;
+    };
+
+    // The wizard used to render Chinese literals no matter what the locale
+    // resolved to, so an English host still saw a Chinese `/setup`.
+    const english = await openKeyPhase(undefined);
+    assert.match(english, /stored on this machine only/);
+    assert.doesNotMatch(english, /[\u4e00-\u9fff]/u);
+
+    const chinese = await openKeyPhase('zh');
+    assert.match(chinese, /仅本机存储/);
   });
 
   test('disables taskbar progress on Windows and Windows Terminal by default', () => {
@@ -513,7 +569,7 @@ describe('Maka Pi TUI runner', () => {
     await waitFor(() => verifyCalls.length === 1);
     await waitFor(() => {
       try {
-        return latestPlainLineContaining(terminal.writes.join(''), '验证失败') !== null;
+        return latestPlainLineContaining(terminal.writes.join(''), 'verification failed') !== null;
       } catch {
         return false;
       }
@@ -633,7 +689,9 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('\r');
     await waitFor(() => {
       try {
-        return latestPlainLineContaining(terminal.writes.join(''), 'Onboarding 不可用') !== null;
+        return (
+          latestPlainLineContaining(terminal.writes.join(''), 'Onboarding unavailable') !== null
+        );
       } catch {
         return false;
       }
@@ -676,7 +734,7 @@ describe('Maka Pi TUI runner', () => {
     );
     assert.doesNotMatch(
       plainTerminalOutput(terminal.screenOutput()),
-      /没有可配置的 API key 类供应商/,
+      /No API-key providers are available to configure/,
     );
 
     process.emit('SIGTERM');
@@ -736,7 +794,7 @@ describe('Maka Pi TUI runner', () => {
     await waitFor(() => verifyCalls.length === 1);
     await waitFor(() => {
       try {
-        return latestPlainLineContaining(terminal.writes.join(''), '验证') !== null;
+        return latestPlainLineContaining(terminal.writes.join(''), 'Verifying') !== null;
       } catch {
         return false;
       }
@@ -771,7 +829,7 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('x');
     await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('sk-bx'));
 
-    assert.doesNotMatch(plainTerminalOutput(terminal.screenOutput()), /验证失败/);
+    assert.doesNotMatch(plainTerminalOutput(terminal.screenOutput()), /verification failed/);
 
     process.emit('SIGTERM');
     await Promise.race([
@@ -833,7 +891,7 @@ describe('Maka Pi TUI runner', () => {
     await waitFor(() => saveCalls.length === 1);
     await waitFor(() => {
       try {
-        return latestPlainLineContaining(terminal.writes.join(''), '保存') !== null;
+        return latestPlainLineContaining(terminal.writes.join(''), 'Saving') !== null;
       } catch {
         return false;
       }
@@ -854,7 +912,7 @@ describe('Maka Pi TUI runner', () => {
     // would be in this exact frame.
     terminal.input('sk-z');
     await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('sk-z'));
-    assert.doesNotMatch(plainTerminalOutput(terminal.screenOutput()), /已启用/);
+    assert.doesNotMatch(plainTerminalOutput(terminal.screenOutput()), /Enabled/);
 
     process.emit('SIGTERM');
     await Promise.race([
@@ -2720,7 +2778,7 @@ describe('Maka Pi TUI runner', () => {
     await waitFor(() => terminal.output().includes('glm-5.2'));
     assert.match(
       plainTerminalOutput(terminal.screenOutput()),
-      /切换模型可能需要重建提示缓存；下一次请求可能更慢或成本更高/,
+      /Switching models may rebuild the prompt cache/,
     );
     // The picker opens on the current model (gpt-5.5); move down to the choice on
     // the other connection and select it.
@@ -2798,7 +2856,7 @@ describe('Maka Pi TUI runner', () => {
     });
     assert.doesNotMatch(
       plainTerminalOutput(terminal.screenOutput()),
-      /切换模型可能需要重建提示缓存/,
+      /Switching models may rebuild the prompt cache/,
     );
 
     // Each query isolates exactly one of the five match criteria named by #1098
@@ -2875,7 +2933,7 @@ describe('Maka Pi TUI runner', () => {
     await waitFor(() => terminal.output().includes('gpt-5.6'));
     assert.doesNotMatch(
       plainTerminalOutput(terminal.screenOutput()),
-      /切换模型可能需要重建提示缓存/,
+      /Switching models may rebuild the prompt cache/,
     );
 
     terminal.input('\x1b[B');
@@ -3169,7 +3227,9 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('\r');
     // The scan failure is surfaced, not swallowed into an empty list.
     await waitFor(() =>
-      plainTerminalOutput(terminal.output()).includes('读取外部对话失败：corrupt index'),
+      plainTerminalOutput(terminal.output()).includes(
+        'Could not read the external conversation: corrupt index',
+      ),
     );
 
     exitMaka(terminal);
@@ -3606,7 +3666,9 @@ describe('Maka Pi TUI runner', () => {
 
     terminal.input('/rewind');
     terminal.input('\r');
-    await waitFor(() => plainTerminalOutput(terminal.output()).includes('回到选定轮次'));
+    await waitFor(() =>
+      plainTerminalOutput(terminal.output()).includes('Rewind to before the selected turn'),
+    );
     terminal.input('\r');
     await waitFor(() => hydrationAttempts === 1);
     await waitFor(() => plainTerminalOutput(terminal.screenOutput()).includes('refilled: turn-2'));
@@ -3829,7 +3891,9 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('/rewind');
     terminal.input('\r');
 
-    await waitFor(() => plainTerminalOutput(terminal.output()).includes('回到选定轮次'));
+    await waitFor(() =>
+      plainTerminalOutput(terminal.output()).includes('Rewind to before the selected turn'),
+    );
     await waitFor(() => plainTerminalOutput(terminal.output()).includes('second question'));
     await waitFor(() => plainTerminalOutput(terminal.output()).includes('first question'));
 
@@ -3837,7 +3901,9 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('\r');
     await waitFor(() => driver.rewound.length === 1);
     assert.deepEqual(driver.rewound, ['turn-2']);
-    await waitFor(() => plainTerminalOutput(terminal.output()).includes('已回退到该轮之前'));
+    await waitFor(() =>
+      plainTerminalOutput(terminal.output()).includes('Rewound to before that turn'),
+    );
     await waitFor(() => plainTerminalOutput(terminal.output()).includes('first answer'));
     // The rewound turn's prompt is refilled into the editor for an edit-and-resend.
     await waitFor(() => plainTerminalOutput(terminal.output()).includes('refilled: turn-2'));
@@ -3918,7 +3984,9 @@ describe('Maka Pi TUI runner', () => {
 
     terminal.input('/rewind');
     terminal.input('\r');
-    await waitFor(() => plainTerminalOutput(terminal.output()).includes('回到选定轮次'));
+    await waitFor(() =>
+      plainTerminalOutput(terminal.output()).includes('Rewind to before the selected turn'),
+    );
     terminal.input('\r');
 
     await waitFor(() => hydrationAttempts === 1);
@@ -4083,7 +4151,9 @@ describe('Maka Pi TUI runner', () => {
 
     terminal.input('/rewind');
     terminal.input('\r');
-    await waitFor(() => plainTerminalOutput(terminal.output()).includes('回到选定轮次'));
+    await waitFor(() =>
+      plainTerminalOutput(terminal.output()).includes('Rewind to before the selected turn'),
+    );
     terminal.input('\r');
     await waitFor(() => hydrationAttempts === 1);
     assert.ok(listener);
@@ -4221,18 +4291,28 @@ describe('Maka Pi TUI runner', () => {
     terminal.input('\x1b');
     terminal.input('z');
     await waitFor(() => editorInputText(terminal) === 'z');
-    assert.equal(plainTerminalOutput(terminal.output()).includes('回到选定轮次'), false);
+    assert.equal(
+      plainTerminalOutput(terminal.output()).includes('Rewind to before the selected turn'),
+      false,
+    );
     terminal.input('\x7f');
     await waitFor(() => editorInputText(terminal) === '');
 
     // A consecutive Escape pair completes the gesture and opens the picker.
     terminal.input('\x1b');
     terminal.input('\x1b');
-    await waitFor(() => plainTerminalOutput(terminal.output()).includes('回到选定轮次'));
+    await waitFor(() =>
+      plainTerminalOutput(terminal.output()).includes('Rewind to before the selected turn'),
+    );
 
     // Cancel the picker so Ctrl-C reaches the runner rather than the overlay.
     terminal.input('\x1b');
-    await waitFor(() => !plainTerminalOutput(terminal.screenOutput()).includes('回到选定轮次'));
+    await waitFor(
+      () =>
+        !plainTerminalOutput(terminal.screenOutput()).includes(
+          'Rewind to before the selected turn',
+        ),
+    );
 
     exitMaka(terminal);
     await Promise.race([
@@ -4273,7 +4353,10 @@ describe('Maka Pi TUI runner', () => {
     // the typed char paints.
     terminal.input('z');
     await waitFor(() => editorInputText(terminal)?.endsWith('z') === true);
-    assert.equal(plainTerminalOutput(terminal.screenOutput()).includes('回到选定轮次'), false);
+    assert.equal(
+      plainTerminalOutput(terminal.screenOutput()).includes('Rewind to before the selected turn'),
+      false,
+    );
 
     exitMaka(terminal);
     await Promise.race([
@@ -4315,7 +4398,10 @@ describe('Maka Pi TUI runner', () => {
     // the typed char paints.
     terminal.input('z');
     await waitFor(() => editorInputText(terminal) === 'z');
-    assert.equal(plainTerminalOutput(terminal.screenOutput()).includes('回到选定轮次'), false);
+    assert.equal(
+      plainTerminalOutput(terminal.screenOutput()).includes('Rewind to before the selected turn'),
+      false,
+    );
 
     exitMaka(terminal);
     await Promise.race([
@@ -4582,7 +4668,7 @@ describe('Maka Pi TUI runner', () => {
 
       // The transcript render trails the send by a tick — wait for it.
       await waitFor(() => plainTerminalOutput(terminal.output()).includes('/skill:alpha 帮我整理'));
-      await waitFor(() => plainTerminalOutput(terminal.output()).includes('已加载技能：Alpha'));
+      await waitFor(() => plainTerminalOutput(terminal.output()).includes('Loaded skills: Alpha'));
 
       exitMaka(terminal);
       await Promise.race([
@@ -4617,7 +4703,7 @@ describe('Maka Pi TUI runner', () => {
       terminal.input('\r');
       await waitFor(() =>
         plainTerminalOutput(terminal.output()).includes(
-          '未能加载技能 /skill:nope（未找到）；未发起模型请求。',
+          'Could not load skill /skill:nope (not found); no model request was issued.',
         ),
       );
       assert.equal(driver.prompts.length, 0);
@@ -4659,9 +4745,7 @@ describe('Maka Pi TUI runner', () => {
       terminal.input(prompt);
       terminal.input('\r');
       await waitFor(() =>
-        plainTerminalOutput(terminal.output()).includes(
-          '请求超过 50 个上限（调用请求过多）；未发起模型请求。',
-        ),
+        plainTerminalOutput(terminal.output()).includes('Requested more than the limit of 50'),
       );
       assert.equal(driver.prompts.length, 0);
 

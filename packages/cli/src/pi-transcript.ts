@@ -39,6 +39,7 @@ import {
 } from './pi-transcript-format.js';
 import { goalStatusLineText, isLiveGoalStatus } from './pi-goal.js';
 import { renderToolBlock } from './pi-transcript-tools.js';
+import { getTuiCopy } from './tui-copy.js';
 import { getTuiPrimaryGuidance } from './tui-primary-guidance.js';
 import type { GoalProjection } from '@maka/runtime-host/protocol';
 
@@ -1440,7 +1441,11 @@ function formatElapsedDuration(elapsedMs: number): string {
  * turn). A trailing hint reminds the user that alt+↑ takes them back to edit.
  * Renders nothing when both queues are empty.
  */
-export function renderMakaPiPendingQueue(state: MakaPiTranscriptState, width: number): string[] {
+export function renderMakaPiPendingQueue(
+  state: MakaPiTranscriptState,
+  width: number,
+  locale: UiLocale,
+): string[] {
   if (
     state.steering.length === 0 &&
     state.followup.length === 0 &&
@@ -1470,7 +1475,7 @@ export function renderMakaPiPendingQueue(state: MakaPiTranscriptState, width: nu
   for (const text of followup) {
     lines.push(fitLine(`${ansi.dim('Queued:')} ${ansi.dim(firstLinePreview(text))}`, safeWidth));
   }
-  lines.push(fitLine(ansi.dim('alt+↑ 取回队列以重新编辑'), safeWidth));
+  lines.push(fitLine(ansi.dim(getTuiCopy(locale).transcript.pendingQueueHint), safeWidth));
   return lines;
 }
 
