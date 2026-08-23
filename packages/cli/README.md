@@ -100,6 +100,20 @@ Maka asks before privileged tool operations by default. `maka run --yolo` grants
 and network access and should only be used in an environment you are prepared to let the task
 modify.
 
+### Interface language
+
+The TUI renders in English or Simplified Chinese. It follows the operating-system locale — `LC_ALL`,
+then `LC_MESSAGES`, then `LANG` — and falls back to English when neither language matches. Set
+`MAKA_LOCALE` to override that:
+
+```sh
+MAKA_LOCALE=en maka
+MAKA_LOCALE=zh maka
+```
+
+`MAKA_LOCALE=auto` restores locale detection. An unsupported value is rejected with a message rather
+than silently guessing. The resolved locale is never persisted.
+
 ## Upgrade
 
 While using prereleases, keep the `next` tag explicit:

@@ -31,6 +31,7 @@ describe('TranscriptViewerOverlay', () => {
     let closed = 0;
     const viewer = new TranscriptViewerOverlay({
       renderTranscript: () => document,
+      locale: 'en' as const,
       viewportRows: () => 6,
       onChange: () => {
         changes += 1;
@@ -86,6 +87,7 @@ describe('TranscriptViewerOverlay', () => {
     const document = Array.from({ length: 6 }, (_, index) => `line ${index + 1}`);
     const viewer = new TranscriptViewerOverlay({
       renderTranscript: () => document,
+      locale: 'en' as const,
       viewportRows: () => 5,
       onChange: () => {},
       onClose: () => {},
@@ -124,6 +126,7 @@ describe('TranscriptViewerOverlay', () => {
     const document = ['line 1', 'line 2'];
     const viewer = new TranscriptViewerOverlay({
       renderTranscript: () => document,
+      locale: 'en' as const,
       viewportRows: () => 6,
       onChange: () => {},
       onClose: () => {},
@@ -146,6 +149,7 @@ describe('TranscriptViewerOverlay', () => {
     let viewportRows = 6;
     const viewer = new TranscriptViewerOverlay({
       renderTranscript: () => document,
+      locale: 'en' as const,
       viewportRows: () => viewportRows,
       onChange: () => {},
       onClose: () => {},
@@ -170,6 +174,7 @@ describe('TranscriptViewerOverlay', () => {
     let closed = 0;
     const viewer = new TranscriptViewerOverlay({
       renderTranscript: () => [],
+      locale: 'en' as const,
       viewportRows: () => 4,
       onChange: () => {},
       onClose: () => {
@@ -187,6 +192,7 @@ describe('TranscriptViewerOverlay', () => {
     let viewportRows = 2;
     const viewer = new TranscriptViewerOverlay({
       renderTranscript: () => document,
+      locale: 'en' as const,
       viewportRows: () => viewportRows,
       onChange: () => {},
       onClose: () => {},

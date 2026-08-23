@@ -93,6 +93,18 @@ maka run --help
 Maka 默认会在执行高权限工具操作前询问。`maka run --yolo` 会授予该任务完整的文件和网络
 权限，只应在你允许任务修改的环境中使用。
 
+### 界面语言
+
+TUI 支持英文与简体中文，按操作系统区域设置解析 —— 依次读取 `LC_ALL`、`LC_MESSAGES`、`LANG`，
+两种语言都不匹配时回退到英文。使用 `MAKA_LOCALE` 覆盖：
+
+```sh
+MAKA_LOCALE=en maka
+MAKA_LOCALE=zh maka
+```
+
+`MAKA_LOCALE=auto` 恢复自动检测。不支持的值会直接报错，而不是猜测。解析出的语言不会被持久化。
+
 ## 升级
 
 使用预发布版本时，请继续明确指定 `next`：

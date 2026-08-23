@@ -60,9 +60,29 @@ export interface OnboardingVerifyInput {
   apiKey?: string;
 }
 
+/**
+ * Why onboarding did not succeed, as a stable code rather than prose.
+ *
+ * The wire vocabulary has to stay locale-independent, so the Host reports a
+ * code and the TUI catalog owns the sentence the user reads
+ * (`onboardingFailureCopy`). `transport` is the one case that carries free
+ * text: a thrown request has no code to report, only its message.
+ */
+export type OnboardingRejectionReason =
+  | 'credential_not_configured'
+  | 'provider_unsupported'
+  | 'slug_conflict'
+  | 'model_unavailable'
+  | 'unknown';
+
+export type OnboardingFailure =
+  | { readonly kind: 'rejected'; readonly reason: OnboardingRejectionReason }
+  | { readonly kind: 'verification_failed'; readonly errorClass: string }
+  | { readonly kind: 'transport'; readonly detail: string };
+
 export type OnboardingVerifyResult =
   | { kind: 'ok'; models: ModelInfo[] }
-  | { kind: 'error'; text: string };
+  | { kind: 'error'; failure: OnboardingFailure };
 
 export interface OnboardingSaveInput {
   providerType: ProviderType;
@@ -73,7 +93,7 @@ export interface OnboardingSaveInput {
 
 export type OnboardingSaveResult =
   | { kind: 'ok'; modelChoices: ModelChoice[] }
-  | { kind: 'error'; text: string };
+  | { kind: 'error'; failure: OnboardingFailure };
 
 export interface MakaOnboardingSurface {
   listProviders(): Promise<OnboardingProviderEntry[]>;

@@ -17,6 +17,8 @@
  * under the License.
  */
 
+import type { UiLocale } from '@maka/core/ui-locale';
+import { getTuiPickerCopy } from './tui-picker-copy.js';
 import {
   Key,
   matchesKey,
@@ -32,6 +34,7 @@ export interface TranscriptViewerInput {
   /** Produces the current read-only CLI transcript projection at this width. */
   renderTranscript(width: number): readonly string[];
   viewportRows(): number;
+  locale: UiLocale;
   onClose(): void;
   onChange(): void;
 }
@@ -105,7 +108,9 @@ export class TranscriptViewerOverlay implements Component {
     const start = visible.length === 0 ? 0 : this.top + 1;
     const end = visible.length === 0 ? 0 : this.top + visible.length;
     const header = padLine(
-      `${ansi.bold('TRANSCRIPT')} ${ansi.dim(`${start}-${end} of ${document.length}`)}`,
+      `${ansi.bold(getTuiPickerCopy(this.input.locale).transcriptViewer.title)} ${ansi.dim(
+        `${start}-${end} of ${document.length}`,
+      )}`,
       safeWidth,
     );
     const body = [
@@ -117,7 +122,7 @@ export class TranscriptViewerOverlay implements Component {
     if (!showFooter) return [header, ...body];
 
     const footer = padLine(
-      ansi.dim('↑/↓ scroll · PgUp/PgDn page · Home/End jump · q/Esc close'),
+      ansi.dim(getTuiPickerCopy(this.input.locale).transcriptViewer.hint),
       safeWidth,
     );
     return [header, ...body, footer];

@@ -126,7 +126,7 @@ import {
 import {
   MakaAutocompleteProvider,
   DirectoryPickerOverlay,
-  MODEL_SWITCH_CACHE_WARNING,
+  modelSwitchCacheWarning,
   ModelSearchOverlay,
   OnboardingWizard,
   PickerOverlay,
@@ -145,6 +145,9 @@ import {
   goalSummaryLines,
   isLiveGoalStatus,
 } from './pi-goal.js';
+import { getTuiNoticeCopy } from './tui-notice-copy.js';
+import { getTuiOnboardingCopy, onboardingFailureCopy } from './tui-onboarding-copy.js';
+import { getTuiPickerCopy } from './tui-picker-copy.js';
 import { getTuiPrimaryGuidance } from './tui-primary-guidance.js';
 import type { GoalControlAction, GoalProjection } from '@maka/runtime-host/protocol';
 
@@ -273,6 +276,9 @@ export function resolveTaskbarProgress(
 export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   const locale = input.locale ?? 'en';
   const primaryGuidance = getTuiPrimaryGuidance(locale);
+  const copy = getTuiNoticeCopy(locale);
+  const pickerCopy = getTuiPickerCopy(locale);
+  const onboardingCopy = getTuiOnboardingCopy(locale);
   const terminal = input.terminal ?? new ProcessTerminal();
   const taskbarProgress = resolveTaskbarProgress(input.taskbarProgress);
   const setTaskbarProgress = (active: boolean): void => {
@@ -415,7 +421,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         state.entries.push({
           kind: 'notice',
           level: 'info',
-          text: goalPausedNoticeText(goal),
+          text: goalPausedNoticeText(goal, locale),
         });
       }
     }
@@ -432,7 +438,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: goalAttachedNoticeText(currentGoal),
+      text: goalAttachedNoticeText(currentGoal, locale),
     });
   }
 
@@ -457,7 +463,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
 
   const transcript = new MakaTranscriptComponent(state, metadata);
   const activityStrip = new MakaActivityStripComponent(metadata);
-  const pendingQueue = new MakaPendingQueueComponent(state);
+  const pendingQueue = new MakaPendingQueueComponent(state, locale);
   const statusLine = new MakaStatusLineComponent(metadata);
   // Show the whole slash-command set at once — discoverability is the point of
   // the menu. Keep a little headroom above the current command count.
@@ -593,35 +599,31 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   // autocomplete or picker open.
   void listSkillsCached(true);
 
-  const SKILL_INVOCATION_FAILURE_REASON_LABEL: Record<string, string> = {
-    not_found: '未找到',
-    disabled: '已禁用',
-    host_incompatible: '当前主机缺少其依赖的工具',
-    invalid_name: '名称无效',
-    too_many_requests: '调用请求过多',
-  };
-
   const showSkillInvocation = (skillInvocation: SkillInvocationResult): void => {
     const failed = skillInvocation.failed;
+    const reasonLabel = (reason: string): string => copy.skills.failureReasons[reason] ?? reason;
     const failedLabels = failed.map((entry) =>
       entry.reason === 'too_many_requests'
-        ? `请求超过 ${entry.requestLimit} 个上限（${SKILL_INVOCATION_FAILURE_REASON_LABEL[entry.reason]}）`
-        : `/skill:${entry.request}（${SKILL_INVOCATION_FAILURE_REASON_LABEL[entry.reason] ?? entry.reason}）`,
+        ? copy.skills.requestLimitExceeded(entry.requestLimit, reasonLabel(entry.reason))
+        : `/skill:${entry.request} (${reasonLabel(entry.reason)})`,
     );
     if (failed.length > 0) {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `未能加载技能 ${failedLabels.join('、')}；${
-          skillInvocation.loaded.length === 0 ? '未发起模型请求。' : '失败的调用标记未发送给模型。'
-        }`,
+        text: copy.skills.failedToLoad(
+          failedLabels.join(copy.skills.listSeparator),
+          skillInvocation.loaded.length === 0,
+        ),
       });
     }
     if (skillInvocation.loaded.length > 0) {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `已加载技能：${skillInvocation.loaded.map((skill) => skill.name).join('、')}`,
+        text: copy.skills.loaded(
+          skillInvocation.loaded.map((skill) => skill.name).join(copy.skills.listSeparator),
+        ),
       });
     }
     requestRender();
@@ -1112,7 +1114,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Cannot change or start Swarm Mode while a turn is running.',
+            text: copy.modes.swarmBusy,
           });
           requestRender();
         }
@@ -1127,7 +1129,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Cannot change or start Graph Mode while a turn is running.',
+            text: copy.modes.graphBusy,
           });
           requestRender();
         }
@@ -1163,7 +1165,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: `Cannot run /${knownCommand.name} while a turn is running — interrupt it (Esc) or wait for it to finish.`,
+            text: copy.commands.busy(knownCommand.name),
           });
           requestRender();
         }
@@ -1479,7 +1481,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: `Model changed: ${previousModel} → ${nextModel}`,
+      text: copy.model.changed(previousModel, nextModel),
     });
     requestRender();
   };
@@ -1507,8 +1509,13 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       level: 'info',
       text:
         previousConnectionSlug === choice.connectionSlug
-          ? `Model changed: ${previousModel} → ${choice.model}`
-          : `Model changed: ${previousModel} (${previousChoice?.connectionName || previousConnectionSlug}) → ${choice.model} (${choice.connectionName || choice.connectionSlug})`,
+          ? copy.model.changed(previousModel, choice.model)
+          : copy.model.changedWithConnection(
+              previousModel,
+              previousChoice?.connectionName || previousConnectionSlug,
+              choice.model,
+              choice.connectionName || choice.connectionSlug,
+            ),
     });
     requestRender();
   };
@@ -1519,7 +1526,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: nextLevel ? `Thinking: ${nextLevel}` : 'Thinking: default',
+      text: nextLevel ? copy.model.thinking(nextLevel) : copy.model.thinkingDefault,
     });
     requestRender();
   };
@@ -1566,25 +1573,25 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: goalAttachedNoticeText(currentGoal),
+        text: goalAttachedNoticeText(currentGoal, locale),
       });
     }
     if (result.relocation?.changed) {
       const warning =
         result.relocation.oldCwdDirty === true
-          ? ` Warning: the old directory "${result.relocation.previousCwd}" has uncommitted changes.`
+          ? copy.session.moveWarning(result.relocation.previousCwd)
           : '';
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `Session moved to "${result.relocation.cwd}".${warning}`,
+        text: `${copy.session.moved(result.relocation.cwd)}${warning}`,
       });
     }
     if (result.messages.length === 0) {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `Resumed session "${result.summary.name}"`,
+        text: copy.session.resumed(result.summary.name),
       });
     }
     requestRender();
@@ -1621,20 +1628,20 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         state.entries.push({
           kind: 'notice',
           level: 'info',
-          text: goalAttachedNoticeText(currentGoal),
+          text: goalAttachedNoticeText(currentGoal, locale),
         });
       }
       if (result.messages.length === 0) {
         state.entries.push({
           kind: 'notice',
           level: 'info',
-          text: `Resumed session "${result.summary.name}"`,
+          text: copy.session.resumed(result.summary.name),
         });
       }
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: 'Detached from the running Turn — it keeps running. /session back to reattach.',
+        text: copy.session.detached,
       });
       requestRender();
     } finally {
@@ -1678,7 +1685,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const pendingNotice: (typeof state.entries)[number] = {
       kind: 'notice',
       level: 'info',
-      text: '正在回退到该轮之前…',
+      text: copy.rewind.pending,
     };
     state.entries.push(pendingNotice);
     requestRender();
@@ -1702,9 +1709,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: refill
-          ? '已回退到该轮之前（分支为新任务，原任务保留），该轮 prompt 已回填输入框，可修改后重新发送。'
-          : '已回退到该轮之前（分支为新任务，原任务保留）。输入框已有未发送内容，未覆盖；该轮 prompt 已存入输入历史，可按 ↑ 找回。',
+        text: refill ? copy.rewind.revertedRefilled : copy.rewind.revertedHistory,
       });
       requestRender();
     } catch (error) {
@@ -1731,7 +1736,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     if (userQuestionInFlight) return;
     const respond = input.driver.respondToUserQuestion;
     if (!respond) {
-      reportError(new Error('User questions are unavailable on this driver.'));
+      reportError(new Error(copy.session.questionsUnavailable));
       return;
     }
     userQuestionInFlight = true;
@@ -1772,9 +1777,9 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     userQuestionOverlay = showBottomPicker(
       new UserQuestionOverlay(tui, {
         title: question.question,
-        rightLabel: `${progress.index + 1} / ${request.questions.length}`,
-        hint: '↑↓ move · type to answer · Enter select · Esc unanswered · Ctrl+C stop',
-        placeholder: 'Other: type your answer…',
+        rightLabel: pickerCopy.question.progress(progress.index + 1, request.questions.length),
+        hint: pickerCopy.question.hint,
+        placeholder: pickerCopy.question.placeholder,
         options: question.options,
         onSelectOption: (index) => advance(question.options[index]?.label ?? null),
         onSubmitText: (value) => advance(value),
@@ -1823,6 +1828,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const picker = new PickerOverlay(list, {
       title,
       rightLabel,
+      locale,
       hint: options.hint,
       notice: options.notice,
     });
@@ -1860,7 +1866,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       return;
     }
     if (!input.onboarding) {
-      wizard.setKeyError('Onboarding 不可用：当前运行环境未提供配置入口。');
+      wizard.setKeyError(onboardingCopy.unavailable);
       requestRender();
       return;
     }
@@ -1875,7 +1881,9 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         if (result.kind === 'error') {
           // Probe failed: re-arm the key field in place. The host stores nothing
           // during verify, so retrying with a corrected key is clean.
-          wizard.setKeyError(`API key 验证失败：${result.text}。请检查后重新输入。`);
+          wizard.setKeyError(
+            onboardingCopy.keyVerifyFailed(onboardingFailureCopy(result.failure, locale)),
+          );
           requestRender();
           return;
         }
@@ -1885,7 +1893,9 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       },
       (error) => {
         if (closed || wizard !== targetWizard || attempt !== wizardAttempt) return;
-        wizard.setKeyError(`配置失败：${error instanceof Error ? error.message : String(error)}`);
+        wizard.setKeyError(
+          onboardingCopy.setupFailed(error instanceof Error ? error.message : String(error)),
+        );
         requestRender();
       },
     );
@@ -1899,7 +1909,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const providerType = wizardProviderType;
     if (!providerType || !wizard) return;
     if (!input.onboarding) {
-      wizard.setModelError('Onboarding 不可用：当前运行环境未提供配置入口。');
+      wizard.setModelError(onboardingCopy.unavailable);
       requestRender();
       return;
     }
@@ -1913,7 +1923,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         (result) => {
           if (result.kind === 'error') {
             if (closed || wizard !== targetWizard || attempt !== wizardAttempt) return;
-            wizard.setModelError(result.text);
+            wizard.setModelError(onboardingFailureCopy(result.failure, locale));
             requestRender();
             return;
           }
@@ -1934,7 +1944,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         (error) => {
           if (closed || wizard !== targetWizard || attempt !== wizardAttempt) return;
           wizard.setModelError(
-            `保存失败：${error instanceof Error ? error.message : String(error)}`,
+            onboardingCopy.saveFailed(error instanceof Error ? error.message : String(error)),
           );
           requestRender();
         },
@@ -1950,7 +1960,9 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         state.entries.push({
           kind: 'notice',
           level: 'info',
-          text: `无法读取已配置的连接：${error instanceof Error ? error.message : String(error)}`,
+          text: onboardingCopy.readConnectionsFailed(
+            error instanceof Error ? error.message : String(error),
+          ),
         });
         requestRender();
         return;
@@ -1968,13 +1980,14 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: '没有可配置的 API key 类供应商。',
+        text: onboardingCopy.noApiKeyProviders,
       });
       requestRender();
       return;
     }
     wizardOverlay?.hide();
     wizard = new OnboardingWizard(tui, {
+      locale,
       providers,
       onPickProvider: (providerType) => {
         wizardProviderType = providerType;
@@ -2021,7 +2034,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         state.entries.push({
           kind: 'notice',
           level: 'error',
-          text: 'Recap is not available in this environment.',
+          text: copy.recap.unavailable,
         });
         requestRender();
       }
@@ -2032,7 +2045,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         state.entries.push({
           kind: 'notice',
           level: 'error',
-          text: 'Recap already running.',
+          text: copy.recap.alreadyRunning,
         });
         requestRender();
       }
@@ -2050,7 +2063,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         state.entries.push({
           kind: 'notice',
           level: 'info',
-          text: 'Nothing to recap yet.',
+          text: copy.recap.nothingYet,
         });
         requestRender();
         return;
@@ -2072,7 +2085,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: `Recap failed: ${result.error}`,
+            text: copy.recap.failed(result.error),
           });
           requestRender();
         }
@@ -2091,7 +2104,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `Recap: ${result.text}`,
+        text: copy.recap.result(result.text),
       });
       requestRender();
     } finally {
@@ -2122,7 +2135,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: 'Compacting context…',
+      text: copy.context.compacting,
     });
     requestRender();
     await submitCompactToTranscript({
@@ -2134,12 +2147,12 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
 
   const resumeSession = async () => {
     if (!input.driver.resumeLatest) {
-      throw new Error('Safe-boundary resume is unavailable on this runtime.');
+      throw new Error(copy.context.resumeUnavailable);
     }
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: 'Resuming from the latest safe boundary…',
+      text: copy.context.resuming,
     });
     requestRender();
     for await (const event of input.driver.resumeLatest()) {
@@ -2196,7 +2209,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'error',
-        text: `读取外部对话失败：${detail}`,
+        text: copy.externalConversation.readFailed(detail),
       });
     } else {
       for (const summary of foreignScan.summaries) {
@@ -2232,7 +2245,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         items.push({
           value,
           label: summary.title,
-          description: `↩ resume from ${foreignSourceLabel(summary.source)}`,
+          description: pickerCopy.session.resumeFrom(foreignSourceLabel(summary.source)),
         });
       }
       const list = new SelectList(items, 10, selectListTheme(), {
@@ -2259,9 +2272,13 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       sessionPickerOverlayOpen = true;
       overlay = showBottomPicker(
         new PickerOverlay(list, {
-          title: 'Resume Session',
-          rightLabel: sessionListScope === 'current' ? 'Current' : 'All',
-          hint: 'Tab scope · ↑↓ move · Enter select · Esc close',
+          title: pickerCopy.session.title,
+          rightLabel:
+            sessionListScope === 'current'
+              ? pickerCopy.session.scopeCurrent
+              : pickerCopy.session.scopeAll,
+          locale,
+          hint: pickerCopy.session.hint,
           onInput: (data) => {
             if (!matchesKey(data, Key.tab) || isKeyRelease(data) || isKeyRepeat(data)) return false;
             sessionListScope = sessionListScope === 'current' ? 'all' : 'current';
@@ -2281,7 +2298,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: '没有可回退的轮次。',
+        text: copy.rewind.none,
       });
       requestRender();
       return;
@@ -2303,7 +2320,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: '无法回退：当前有正在进行的操作 — 请等待其完成，或中断（Esc）后重试。',
+            text: copy.rewind.blockedBusy,
           });
           requestRender();
           return;
@@ -2313,7 +2330,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       {
         minPrimaryColumnWidth: 24,
         maxPrimaryColumnWidth: 48,
-        hint: '回到选定轮次之前（丢弃该轮及之后，prompt 回填输入框） · enter 选择 / esc 取消',
+        hint: pickerCopy.rewind.hint,
       },
     );
   };
@@ -2403,6 +2420,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const viewer = new TranscriptViewerOverlay({
       renderTranscript,
       viewportRows: () => terminal.rows,
+      locale,
       onClose: () => overlay?.hide(),
       onChange: () => tui.requestRender(),
     });
@@ -2423,6 +2441,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     if (choices && choices.length > 0) {
       let overlay: OverlayHandle | undefined;
       const picker = new ModelSearchOverlay(tui, {
+        locale,
         choices,
         current: { model, connectionSlug },
         showCacheWarning: hasConversationHistory,
@@ -2436,7 +2455,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       return;
     }
     showSelectPicker(
-      'Select Model',
+      pickerCopy.model.title,
       connectionSlug,
       modelPickerItems(model, input.models),
       (item) => {
@@ -2445,7 +2464,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       {
         minPrimaryColumnWidth: 24,
         maxPrimaryColumnWidth: 48,
-        notice: hasConversationHistory ? MODEL_SWITCH_CACHE_WARNING : undefined,
+        notice: hasConversationHistory ? modelSwitchCacheWarning(locale) : undefined,
       },
     );
   };
@@ -2460,13 +2479,13 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: '当前没有可调用的技能。',
+        text: copy.skills.none,
       });
       requestRender();
       return;
     }
     showSelectPicker(
-      'Invoke Skill',
+      pickerCopy.skill.title,
       String(entries.length),
       skillPickerItems(entries),
       (item) => {
@@ -2478,9 +2497,9 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   };
 
   const showThinkingLevelList = () => {
-    const items = thinkingLevelPickerItems(thinkingLevels, thinkingLevel);
+    const items = thinkingLevelPickerItems(thinkingLevels, thinkingLevel, locale);
     showSelectPicker(
-      'Select Thinking Level',
+      pickerCopy.thinking.title,
       thinkingLevel ?? 'default',
       items,
       (item) => {
@@ -2503,7 +2522,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: `Permissions: ${permissionModeLabel(permissionMode)}`,
+      text: pickerCopy.permissions.title(permissionModeLabel(permissionMode, locale)),
     });
     requestRender();
   };
@@ -2516,18 +2535,17 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const confirmation = [
       {
         value: 'keep',
-        label: 'Keep Auto',
-        description: 'Stay inside the protected environment',
+        label: pickerCopy.permissions.keepAuto,
+        description: pickerCopy.permissions.keepAutoDetail,
       },
       {
         value: 'bypass',
-        label: 'Turn on full access',
-        description:
-          'Reach your files and your network directly; use only for trusted or externally isolated tasks',
+        label: pickerCopy.permissions.enableFullAccess,
+        description: pickerCopy.permissions.enableFullAccessDetail,
       },
     ];
     showSelectPicker(
-      'Switch to full access?',
+      pickerCopy.permissions.confirmTitle,
       'keep',
       confirmation,
       (choice) => {
@@ -2547,24 +2565,21 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text:
-        orchestrationMode === 'swarm'
-          ? 'Swarm Mode is on for this session.'
-          : 'Swarm Mode is off for this session.',
+      text: orchestrationMode === 'swarm' ? copy.modes.swarmOn : copy.modes.swarmOff,
     });
     requestRender();
   };
 
   const setSwarmMode = async (mode: OrchestrationMode) => {
     if (!input.driver.setOrchestrationMode) {
-      throw new Error('Swarm Mode is unavailable on this session driver.');
+      throw new Error(copy.modes.swarmUnavailable);
     }
     await input.driver.setOrchestrationMode(mode);
     orchestrationMode = mode;
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: mode === 'swarm' ? 'Swarm Mode enabled for this session.' : 'Swarm Mode disabled.',
+      text: mode === 'swarm' ? copy.modes.swarmEnabled : copy.modes.swarmDisabled,
     });
     requestRender();
   };
@@ -2588,7 +2603,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: 'Using Swarm Mode for this turn only.',
+      text: copy.modes.swarmOnce,
     });
     void runAgentTurn({
       kind: 'external',
@@ -2602,8 +2617,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text:
-        orchestrationMode === 'graph' ? 'Graph Mode is on for this session.' : 'Graph Mode is off.',
+      text: orchestrationMode === 'graph' ? copy.modes.graphOn : copy.modes.graphOff,
     });
     requestRender();
   };
@@ -2611,7 +2625,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   const showGraphHistory = async (): Promise<void> => {
     const rootSessionId = input.driver.getSessionId();
     if (!rootSessionId || !input.agentGraphHistory) {
-      throw new Error('Agent Graph history is unavailable on this session driver.');
+      throw new Error(copy.modes.graphHistoryUnavailable);
     }
     const directory = await input.agentGraphHistory.listEpochs(rootSessionId);
     // The TUI may have shut down while the page reads were in flight.
@@ -2619,24 +2633,24 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const { epochs, truncated } = directory;
     const items: SelectItem[] = epochs.map((entry) => ({
       value: entry.graphId,
-      label: `Run #${entry.epoch}${entry.current ? ' · Current' : ''}`,
-      description: entry.current ? 'Current graph' : 'History · read-only',
+      label: pickerCopy.graph.run(entry.epoch, entry.current),
+      description: entry.current ? pickerCopy.graph.current : pickerCopy.graph.historyReadOnly,
     }));
     if (items.length === 0) {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: 'This session has no Agent Graph runs.',
+        text: copy.modes.graphNoRuns,
       });
       requestRender();
       return;
     }
     const epochsByGraphId = new Map(epochs.map((entry) => [entry.graphId, entry]));
     showSelectPicker(
-      'Agent Graph History',
+      pickerCopy.graph.title,
       truncated
-        ? `newest ${items.length} runs (history capped)`
-        : `${items.length} run${items.length === 1 ? '' : 's'}`,
+        ? pickerCopy.graph.runCountCapped(items.length)
+        : pickerCopy.graph.runCount(items.length),
       items,
       (item) => {
         const epoch = epochsByGraphId.get(item.value);
@@ -2647,7 +2661,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'info',
-            text: formatAgentGraphHistory(graph, epoch),
+            text: formatAgentGraphHistory(graph, epoch, locale),
           });
           requestRender();
         });
@@ -2659,21 +2673,21 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           0,
           epochs.findIndex((entry) => entry.current),
         ),
-        hint: '↑↓ move · Enter inspect · Esc close',
+        hint: pickerCopy.graph.hint,
       },
     );
   };
 
   const setGraphMode = async (mode: OrchestrationMode) => {
     if (!input.driver.setOrchestrationMode) {
-      throw new Error('Graph Mode is unavailable on this session driver.');
+      throw new Error(copy.modes.graphUnavailable);
     }
     await input.driver.setOrchestrationMode(mode);
     orchestrationMode = mode;
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: mode === 'graph' ? 'Graph Mode enabled for this session.' : 'Graph Mode disabled.',
+      text: mode === 'graph' ? copy.modes.graphEnabled : copy.modes.graphDisabled,
     });
     requestRender();
   };
@@ -2701,7 +2715,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: 'Using Graph Mode for this turn only.',
+      text: copy.modes.graphOnce,
     });
     void runAgentTurn({
       kind: 'external',
@@ -2716,7 +2730,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'error',
-        text: 'Moving sessions is not available in this environment.',
+        text: copy.session.moveUnavailable,
       });
       requestRender();
       return;
@@ -2726,21 +2740,18 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `Session is already at "${result.cwd}".`,
+        text: copy.session.alreadyAt(result.cwd),
       });
       requestRender();
       return;
     }
     cwd = result.cwd;
     refreshEditorCwd?.(cwd);
-    const warning =
-      result.oldCwdDirty === true
-        ? ` Warning: the old directory "${result.previousCwd}" has uncommitted changes.`
-        : '';
+    const warning = result.oldCwdDirty === true ? copy.session.moveWarning(result.previousCwd) : '';
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: `Session moved to "${result.cwd}".${warning}`,
+      text: `${copy.session.moved(result.cwd)}${warning}`,
     });
     requestRender();
   };
@@ -2750,7 +2761,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'error',
-        text: 'Moving sessions is not available in this environment.',
+        text: copy.session.moveUnavailable,
       });
       requestRender();
       return;
@@ -2759,6 +2770,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     const picker = new DirectoryPickerOverlay(tui, {
       currentCwd: cwd,
       basePath: cwd,
+      locale,
       onSubmit: (targetCwd) => {
         overlay?.hide();
         void runControl(() => moveSession(targetCwd));
@@ -2769,15 +2781,15 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   };
 
   const showPermissionModeList = () => {
-    const items = permissionModePickerItems(permissionMode);
+    const items = permissionModePickerItems(permissionMode, locale);
     // Where the cursor opens. It is NOT a claim about the current state —
     // `permissionModePickerItems` marks `current` only on an option that is
     // genuinely in force, so a read-only session marks neither and choosing
     // Auto reads as the permission change it is.
     const cursorValue = permissionMode === 'bypass' ? 'bypass' : 'auto';
     showSelectPicker(
-      'Permissions',
-      permissionModeLabel(permissionMode),
+      pickerCopy.permissions.pickerTitle,
+      permissionModeLabel(permissionMode, locale),
       items,
       (item) => {
         if (item.value === 'auto' || item.value === 'bypass') {
@@ -2802,7 +2814,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: 'Goal status is unavailable on this runtime.',
+        text: copy.goal.statusUnavailable,
       });
       requestRender();
       return;
@@ -2811,7 +2823,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: goal ? goalSummaryLines(goal, Date.now()).join('\n') : 'No goal set.',
+      text: goal ? goalSummaryLines(goal, Date.now(), locale).join('\n') : copy.goal.none,
     });
     requestRender();
   };
@@ -2823,11 +2835,11 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     };
     const goal = input.driver.getGoal?.() ?? null;
     if (!goal) {
-      notice('No goal set.');
+      notice(copy.goal.none);
       return;
     }
     if (!input.driver.controlGoal) {
-      notice('Goal control is unavailable on this runtime.');
+      notice(copy.goal.controlUnavailable);
       return;
     }
     // Pre-validate against the live projection so an invalid transition gets
@@ -2835,15 +2847,15 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     // host's rules exactly: pause requires active|waiting, resume requires
     // paused, clear rejects a terminal record.
     if (action === 'pause' && goal.status !== 'active' && goal.status !== 'waiting') {
-      notice(`Cannot pause: the goal is ${goalStatusLabel(goal.status)}.`);
+      notice(copy.goal.cannotPause(goalStatusLabel(goal.status, locale)));
       return;
     }
     if (action === 'resume' && goal.status !== 'paused') {
-      notice(`Cannot resume: the goal is ${goalStatusLabel(goal.status)}.`);
+      notice(copy.goal.cannotResume(goalStatusLabel(goal.status, locale)));
       return;
     }
     if (action === 'clear' && !isLiveGoalStatus(goal.status)) {
-      notice(`Cannot clear: the goal is ${goalStatusLabel(goal.status)}.`);
+      notice(copy.goal.cannotClear(goalStatusLabel(goal.status, locale)));
       return;
     }
     if (action === 'pause') selfInitiatedPauseGoalId = goal.goalId;
@@ -2857,7 +2869,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
     if (result === null) {
       // The goal disappeared to a concurrent controller mid-flight.
       selfInitiatedPauseGoalId = null;
-      notice(action === 'clear' ? 'Goal cleared.' : 'The goal no longer exists.');
+      notice(action === 'clear' ? copy.goal.cleared : copy.goal.gone);
       return;
     }
     // Keep the transition cache on the authoritative response: a trailing push
@@ -2869,11 +2881,11 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
       // the user, and a lingering flag would suppress a later host-initiated
       // pause of this goal (e.g. the Ctrl+C auto-pause).
       selfInitiatedPauseGoalId = null;
-      notice('Goal paused. /goal resume continues it, /goal clear stops it.');
+      notice(copy.goal.paused);
     } else if (action === 'resume') {
-      notice('Goal resumed.');
+      notice(copy.goal.resumed);
     } else {
-      notice('Goal cleared.');
+      notice(copy.goal.cleared);
     }
   };
 
@@ -2888,7 +2900,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /context',
+            text: copy.commands.usage('/context'),
           });
           requestRender();
           return;
@@ -2914,7 +2926,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /compact',
+            text: copy.commands.usage('/compact'),
           });
           requestRender();
           return;
@@ -2952,7 +2964,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /goal [pause|resume|clear]',
+            text: copy.commands.usage('/goal [pause|resume|clear]'),
           });
           requestRender();
           return;
@@ -2964,7 +2976,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Cannot control the goal while a turn or another action is running — interrupt it (Esc) or wait for it to finish.',
+            text: copy.goal.busy,
           });
           requestRender();
           return;
@@ -2994,7 +3006,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /skill，或直接在消息中输入 /skill:<name>',
+            text: copy.skills.usage,
           });
           requestRender();
           return;
@@ -3010,7 +3022,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /setup',
+            text: copy.commands.usage('/setup'),
           });
           requestRender();
           return;
@@ -3031,7 +3043,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /model <model-id>',
+            text: copy.commands.usage('/model <model-id>'),
           });
           requestRender();
           return;
@@ -3060,7 +3072,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
             state.entries.push({
               kind: 'notice',
               level: 'info',
-              text: '当前模型不支持思考级别切换。',
+              text: pickerCopy.thinking.unsupported,
             });
             requestRender();
             return;
@@ -3070,7 +3082,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         }
         const token = parts.length === 2 ? parts[1] : undefined;
         // `off` is a real level now (maps to reasoningEffort:'none' / thinking
-        // disabled), not a synonym for 默认. Only `default` clears the override.
+        // disabled), not a synonym for the default entry. Only `default` clears the override.
         const level = token === 'default' ? undefined : token;
         // Reject levels the current model does not support (P2-1): the picker
         // already restricts to `thinkingLevels`, but the typed command path
@@ -3081,8 +3093,8 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
             level: 'error',
             text:
               thinkingLevels.length === 0
-                ? '当前模型不支持思考级别切换。'
-                : `Usage: /thinking ${['default', ...thinkingLevels].join('|')}`,
+                ? pickerCopy.thinking.unsupported
+                : copy.commands.usage(`/thinking ${['default', ...thinkingLevels].join('|')}`),
           });
           requestRender();
           return;
@@ -3098,7 +3110,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /transcript',
+            text: copy.commands.usage('/transcript'),
           });
           requestRender();
           return;
@@ -3119,7 +3131,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /permissions auto|bypass',
+            text: copy.commands.usage('/permissions auto|bypass'),
           });
           requestRender();
           return;
@@ -3146,7 +3158,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /rename <new name>',
+            text: copy.commands.usage('/rename <new name>'),
           });
           requestRender();
           return;
@@ -3157,7 +3169,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'info',
-            text: `Session renamed to "${renamedName}"`,
+            text: copy.session.renamed(renamedName),
           });
           requestRender();
         });
@@ -3171,7 +3183,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /resume',
+            text: copy.commands.usage('/resume'),
           });
           requestRender();
           return;
@@ -3202,7 +3214,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
           state.entries.push({
             kind: 'notice',
             level: 'error',
-            text: 'Usage: /session <session-id>',
+            text: copy.commands.usage('/session <session-id>'),
           });
           requestRender();
           return;
@@ -3414,7 +3426,7 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
         handleProcessExit(0);
       } else {
         lastIdleCtrlCAt = now;
-        state.entries.push({ kind: 'notice', level: 'info', text: 'Press Ctrl+C again to exit.' });
+        state.entries.push({ kind: 'notice', level: 'info', text: copy.exit.pressAgain });
         requestRender();
       }
       return { consume: true };
@@ -3462,30 +3474,26 @@ export async function runMakaPiTui(input: MakaPiTuiInput): Promise<void> {
   }
 
   if (input.resumeSessionId) {
+    const resumeSessionId = input.resumeSessionId;
     void runControl(async () => {
       try {
-        await switchSession(input.resumeSessionId!, input.resumeCwd);
+        await switchSession(resumeSessionId, input.resumeCwd);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (input.resumeFailure === 'exit') {
-          handleProcessExit(
-            1,
-            new Error(`Could not resume session ${input.resumeSessionId}: ${message}`),
-          );
+          handleProcessExit(1, new Error(copy.session.resumeFailed(resumeSessionId, message)));
           return;
         }
         const recoveryHint =
-          input.resumeCwd === undefined && message.startsWith('Session cwd no longer exists:')
-            ? ` Retry with: ${formatMakaResumeCommand(
-                input.cliCommand ?? 'maka',
-                input.resumeSessionId!,
-                { cwd: '<new-path>' },
-              )}.`
+          input.resumeCwd === undefined && message.startsWith(copy.session.cwdMissing)
+            ? ` Retry with: ${formatMakaResumeCommand(input.cliCommand ?? 'maka', resumeSessionId, {
+                cwd: '<new-path>',
+              })}.`
             : '';
         state.entries.push({
           kind: 'notice',
           level: 'error',
-          text: `Could not resume session ${input.resumeSessionId}: ${message}.${recoveryHint} Starting fresh.`,
+          text: copy.session.resumeFailedStartingFresh(resumeSessionId, message, recoveryHint),
         });
         requestRender();
       }
@@ -3618,36 +3626,33 @@ function formatContextCount(value: number): string {
 function formatAgentGraphHistory(
   graph: AgentGraphClientSnapshot,
   epoch: AgentGraphEpochSummary,
+  locale: UiLocale,
 ): string {
+  const copy = getTuiNoticeCopy(locale).graphHistory;
   const settled = graph.operators.filter((operator) =>
     ['completed', 'failed', 'aborted', 'cancelled'].includes(operator.status),
   ).length;
   const lines = [
-    `Agent Graph run #${epoch.epoch}${epoch.current ? ' · Current' : ' · History (read-only)'}`,
-    `  ${formatAgentGraphStatus(graph.status)} · ${settled}/${graph.operators.length} operators settled`,
+    copy.runHeading(epoch.epoch, epoch.current),
+    `  ${copy.settled(formatAgentGraphStatus(graph.status, locale), settled, graph.operators.length)}`,
   ];
   for (const operator of graph.operators) {
     lines.push(`  ${operator.agentId}: ${operator.status.replaceAll('_', ' ')}`);
   }
   if (graph.finish) {
-    lines.push(`  Selected results: ${graph.finish.resultIds.join(', ') || 'none'}`);
+    lines.push(`  ${copy.selectedResults(graph.finish.resultIds.join(', ') || copy.none)}`);
   }
   if (graph.omitted.operators > 0) {
-    lines.push(`  ${graph.omitted.operators} more operators omitted`);
+    lines.push(`  ${copy.omittedOperators(graph.omitted.operators)}`);
   }
   return lines.join('\n');
 }
 
-function formatAgentGraphStatus(status: AgentGraphClientSnapshot['status']): string {
-  return {
-    empty: 'Awaiting schedule',
-    active: 'Running',
-    closing: 'Finishing',
-    waiting: 'Waiting',
-    stopped: 'Stopped',
-    failed: 'Failed',
-    completed: 'Completed',
-  }[status];
+function formatAgentGraphStatus(
+  status: AgentGraphClientSnapshot['status'],
+  locale: UiLocale,
+): string {
+  return getTuiNoticeCopy(locale).graphStatus[status] ?? status;
 }
 
 function flattenLinkedSessionTree(

@@ -58,6 +58,7 @@ import {
 } from './pi-transcript-format.js';
 import { goalStatusLineText, isLiveGoalStatus } from './pi-goal.js';
 import { renderToolBlock } from './pi-transcript-tools.js';
+import { getTuiTranscriptCopy } from './tui-transcript-copy.js';
 import { getTuiPrimaryGuidance } from './tui-primary-guidance.js';
 import type { GoalProjection } from '@maka/runtime-host/protocol';
 
@@ -73,6 +74,12 @@ export interface MakaPiUsageSummary {
 }
 
 export interface MakaPiTranscriptState {
+  /**
+   * Resolved locale for notices this state records. Notices are built while
+   * folding events, not at render time, so the locale has to live here rather
+   * than on render metadata. Fixed for the life of the process.
+   */
+  uiLocale: UiLocale;
   entries: MakaPiTranscriptEntry[];
   pendingInteraction?: MakaPiPendingInteraction;
   queuedInteractions: MakaPiPendingInteraction[];
@@ -225,8 +232,13 @@ export interface MakaPiTranscriptMetadata {
   goal?: GoalProjection | null;
 }
 
-export function createMakaPiTranscriptState(): MakaPiTranscriptState {
+function toggleCopy(state: MakaPiTranscriptState) {
+  return getTuiTranscriptCopy(state.uiLocale).toggle;
+}
+
+export function createMakaPiTranscriptState(uiLocale: UiLocale = 'en'): MakaPiTranscriptState {
   return {
+    uiLocale,
     entries: [],
     queuedInteractions: [],
     expandAllTools: false,
@@ -343,7 +355,9 @@ export function replaceTranscriptWithStoredMessages(
   messages: readonly StoredMessage[],
 ): void {
   const view = materializeSession(messages);
-  state.entries = foldStoredShellRunChildren(view.items.flatMap(chatItemToTranscriptEntries));
+  state.entries = foldStoredShellRunChildren(
+    view.items.flatMap((item) => chatItemToTranscriptEntries(item, state.uiLocale)),
+  );
   clearPendingInteractions(state);
   state.pendingShellRunPolls.clear();
   state.expandAllTools = false;
@@ -378,7 +392,9 @@ export function reconcileToolsWithStoredMessages(
   const turnMessages = messages.filter((message) => message.turnId === turnId);
   const durableTools = new Map(
     foldStoredShellRunChildren(
-      materializeSession(turnMessages).items.flatMap(chatItemToTranscriptEntries),
+      materializeSession(turnMessages).items.flatMap((item) =>
+        chatItemToTranscriptEntries(item, state.uiLocale),
+      ),
     )
       .filter(
         (entry): entry is Extract<MakaPiTranscriptEntry, { kind: 'tool' }> => entry.kind === 'tool',
@@ -472,7 +488,9 @@ export function toggleAllToolExpansion(state: MakaPiTranscriptState): boolean {
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: `No tool card in view to toggle — cards above stay as rendered in scrollback. New tool output starts ${state.expandAllTools ? 'expanded' : 'collapsed'}.`,
+      text: toggleCopy(state).noToolCardInView(
+        state.expandAllTools ? toggleCopy(state).expanded : toggleCopy(state).collapsed,
+      ),
     });
   }
   return true;
@@ -498,7 +516,9 @@ export function toggleAllThinkingExpansion(state: MakaPiTranscriptState): boolea
     state.entries.push({
       kind: 'notice',
       level: 'info',
-      text: `No thinking in view to toggle — thinking above stays as rendered in scrollback. New thinking starts ${state.expandAllThinking ? 'expanded' : 'collapsed'}.`,
+      text: toggleCopy(state).noThinkingInView(
+        state.expandAllThinking ? toggleCopy(state).expanded : toggleCopy(state).collapsed,
+      ),
     });
   }
   return true;
@@ -513,7 +533,10 @@ export async function submitCompactToTranscript(input: {
   let sawCompactionNotice = false;
   try {
     for await (const event of input.driver.compactSession()) {
-      if (event.type === 'token_usage' && contextBudgetOutcomeNotice(event.contextBudget))
+      if (
+        event.type === 'token_usage' &&
+        contextBudgetOutcomeNotice(event.contextBudget, input.state.uiLocale)
+      )
         sawCompactionNotice = true;
       if (event.type === 'complete' && event.stopReason === 'end_turn') completed = true;
       applyMakaSessionEventToTranscript(input.state, event);
@@ -523,7 +546,7 @@ export async function submitCompactToTranscript(input: {
       input.state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: 'Nothing to compact.',
+        text: getTuiTranscriptCopy(input.state.uiLocale).compact.nothingToCompact,
       });
       input.onChange?.();
     }
@@ -750,7 +773,11 @@ export function applyMakaSessionEventToTranscript(
           state.entries.push({
             kind: 'notice',
             level: 'info',
-            text: `Access ${event.decision === 'allow' ? 'expanded' : 'unchanged'}`,
+            text: getTuiTranscriptCopy(state.uiLocale).access.changed(
+              event.decision === 'allow'
+                ? getTuiTranscriptCopy(state.uiLocale).access.expanded
+                : getTuiTranscriptCopy(state.uiLocale).access.unchanged,
+            ),
           });
         }
       }
@@ -764,7 +791,7 @@ export function applyMakaSessionEventToTranscript(
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `Plan submitted: ${event.title}`,
+        text: getTuiTranscriptCopy(state.uiLocale).plan.submitted(event.title),
       });
       break;
 
@@ -785,7 +812,7 @@ export function applyMakaSessionEventToTranscript(
 
     case 'token_usage': {
       accumulateUsage(state.usage, event);
-      const notice = contextBudgetOutcomeNotice(event.contextBudget);
+      const notice = contextBudgetOutcomeNotice(event.contextBudget, state.uiLocale);
       if (notice) {
         state.entries.push({
           kind: 'notice',
@@ -812,7 +839,7 @@ export function applyMakaSessionEventToTranscript(
       state.entries.push({
         kind: 'notice',
         level: 'info',
-        text: `Stopped: ${event.reason}`,
+        text: getTuiTranscriptCopy(state.uiLocale).stopped.reason(event.reason),
       });
       break;
 
@@ -823,7 +850,7 @@ export function applyMakaSessionEventToTranscript(
         state.entries.push({
           kind: 'notice',
           level: 'info',
-          text: 'Stopped: max tokens',
+          text: getTuiTranscriptCopy(state.uiLocale).stopped.maxTokens,
         });
       }
       if (event.stopReason === 'step_limit') {
@@ -833,7 +860,7 @@ export function applyMakaSessionEventToTranscript(
   }
 }
 
-function chatItemToTranscriptEntries(item: ChatItem): MakaPiTranscriptEntry[] {
+function chatItemToTranscriptEntries(item: ChatItem, locale: UiLocale): MakaPiTranscriptEntry[] {
   switch (item.kind) {
     case 'user':
       return [
@@ -865,19 +892,19 @@ function chatItemToTranscriptEntries(item: ChatItem): MakaPiTranscriptEntry[] {
       return entries;
     }
     case 'tool':
-      return [toolActivityToTranscriptEntry(item.item)];
+      return [toolActivityToTranscriptEntry(item.item, locale)];
     case 'system_note': {
-      const entry = systemNoteToTranscriptEntry(item.message);
+      const entry = systemNoteToTranscriptEntry(item.message, locale);
       return entry ? [entry] : [];
     }
   }
 }
 
-function toolActivityToTranscriptEntry(item: ToolActivityItem): MakaPiToolEntry {
+function toolActivityToTranscriptEntry(item: ToolActivityItem, locale: UiLocale): MakaPiToolEntry {
   const output = item.result
     ? formatToolResultContent(item.result)
     : item.status === 'interrupted'
-      ? 'Interrupted before the tool returned a result.'
+      ? getTuiTranscriptCopy(locale).tool.interruptedBeforeResult
       : undefined;
   const entry: MakaPiToolEntry = {
     kind: 'tool',
@@ -1033,8 +1060,9 @@ function applyOwnShellRunResult(
 
 function systemNoteToTranscriptEntry(
   message: SystemNoteMessage,
+  locale: UiLocale,
 ): MakaPiTranscriptEntry | undefined {
-  const text = systemNoteText(message);
+  const text = systemNoteText(message, locale);
   if (!text) return undefined;
   return {
     kind: 'notice',
@@ -1045,16 +1073,18 @@ function systemNoteToTranscriptEntry(
 
 function contextBudgetOutcomeNotice(
   contextBudget: ContextBudgetDiagnostic | undefined,
+  locale: UiLocale,
 ): { level: 'info' | 'error'; text: string } | undefined {
-  const failedOpen = contextBudgetFailureNoticeText(contextBudget);
+  const failedOpen = contextBudgetFailureNoticeText(contextBudget, locale);
   if (failedOpen) return { level: 'error', text: failedOpen };
-  const replaced = contextBudgetNoticeText(contextBudget);
+  const replaced = contextBudgetNoticeText(contextBudget, locale);
   if (replaced) return { level: 'info', text: replaced };
   return undefined;
 }
 
 function contextBudgetNoticeText(
   contextBudget: ContextBudgetDiagnostic | undefined,
+  locale: UiLocale,
 ): string | undefined {
   const decision = contextBudget?.compactionDecisions?.find(
     (candidate) => candidate.decision === 'replaced',
@@ -1070,24 +1100,25 @@ function contextBudgetNoticeText(
       contextBudget.historyCompactedEstimatedTokensAfter,
     ) ??
     tokenDelta(contextBudget.estimatedTokensBefore, contextBudget.estimatedTokensAfter);
-  const parts = [`Context compacted: ${kind}`];
+  const copy = getTuiTranscriptCopy(locale).compaction;
+  const parts = [copy.compacted(kind)];
   if (coveredTurns !== undefined || coveredEvents !== undefined) {
-    parts.push(`${coveredTurns ?? '?'} turns / ${coveredEvents ?? '?'} events`);
+    parts.push(copy.coverage(String(coveredTurns ?? '?'), String(coveredEvents ?? '?')));
   }
-  if (savedTokens !== undefined && savedTokens > 0)
-    parts.push(`saved ~${Math.round(savedTokens)} tokens`);
+  if (savedTokens !== undefined && savedTokens > 0) parts.push(copy.saved(Math.round(savedTokens)));
   return `${parts.join('; ')}.`;
 }
 
 function contextBudgetFailureNoticeText(
   contextBudget: ContextBudgetDiagnostic | undefined,
+  locale: UiLocale,
 ): string | undefined {
   const decision = contextBudget?.compactionDecisions?.find(
     (candidate) => candidate.decision === 'failedOpen',
   );
   const reason = decision?.failOpenReason ?? decision?.reason;
   if (!decision || !reason) return undefined;
-  return `Context compaction skipped: ${reason}.`;
+  return getTuiTranscriptCopy(locale).compaction.skipped(reason);
 }
 
 function tokenDelta(before: number | undefined, after: number | undefined): number | undefined {
@@ -1095,25 +1126,26 @@ function tokenDelta(before: number | undefined, after: number | undefined): numb
   return Math.max(0, before - after);
 }
 
-function systemNoteText(message: SystemNoteMessage): string | undefined {
+function systemNoteText(message: SystemNoteMessage, locale: UiLocale): string | undefined {
+  const copy = getTuiTranscriptCopy(locale).systemNote;
   switch (message.kind) {
     case 'session_start':
     case 'session_resume':
       return undefined;
     case 'mode_change':
-      return 'Permission mode changed.';
+      return copy.modeChange;
     case 'model_change':
-      return 'Model changed.';
+      return copy.modelChange;
     case 'context_compacted':
-      return 'Context compacted to keep this task within the model window.';
+      return copy.contextCompacted;
     case 'context_compaction_failed_open':
-      return 'Context summary failed; the session continued without a new summary.';
+      return copy.compactionFailedOpen;
     case 'step_limit':
       return STEP_LIMIT_NOTICE_TEXT;
     case 'error':
-      return 'Session recorded an error.';
+      return copy.error;
     case 'abort':
-      return 'Session was stopped.';
+      return copy.abort;
   }
 }
 
@@ -1162,13 +1194,13 @@ export function renderMakaPiTranscript(
     const fullyOffScreen =
       lines.length < viewportTop &&
       (entryHeight === 0 || lines.length + entryHeight <= viewportTop);
-    lines.push(...renderTranscriptEntryMemoized(entry, safeWidth, fullyOffScreen));
+    lines.push(...renderTranscriptEntryMemoized(entry, safeWidth, fullyOffScreen, state.uiLocale));
   }
   state.renderGeometry.entryFirstLine = entryFirstLine;
 
   if (state.pendingInteraction?.type === 'sandbox_boundary_request') {
     lines.push('');
-    lines.push(...renderSandboxBoundaryPrompt(state.pendingInteraction, safeWidth));
+    lines.push(...renderSandboxBoundaryPrompt(state.pendingInteraction, safeWidth, state.uiLocale));
   }
 
   return lines;
@@ -1251,6 +1283,7 @@ function renderTranscriptEntryMemoized(
   entry: MakaPiTranscriptEntry,
   width: number,
   offScreen: boolean,
+  locale: UiLocale,
 ): string[] {
   // Off-screen entries live in terminal scrollback, which is immutable: any
   // change to their rendered lines forces pi-tui's differential renderer into a
@@ -1263,15 +1296,19 @@ function renderTranscriptEntryMemoized(
     const cached = transcriptEntryRenderCache.get(entry);
     if (cached && cached.width === width) return cached.lines;
   }
-  const signature = transcriptEntrySignature(entry, width);
+  const signature = `${locale}|${transcriptEntrySignature(entry, width)}`;
   const cached = transcriptEntryRenderCache.get(entry);
   if (cached && cached.signature === signature) return cached.lines;
-  const lines = renderTranscriptEntryBlock(entry, width);
+  const lines = renderTranscriptEntryBlock(entry, width, locale);
   transcriptEntryRenderCache.set(entry, { signature, lines, width });
   return lines;
 }
 
-function renderTranscriptEntryBlock(entry: MakaPiTranscriptEntry, width: number): string[] {
+function renderTranscriptEntryBlock(
+  entry: MakaPiTranscriptEntry,
+  width: number,
+  locale: UiLocale,
+): string[] {
   // Keep the conversation stream inside a one-cell gutter. The editor owns
   // the full terminal width, so this makes the two surfaces align without
   // changing any of the individual block renderers' internal prefixes.
@@ -1281,9 +1318,9 @@ function renderTranscriptEntryBlock(entry: MakaPiTranscriptEntry, width: number)
       case 'user':
         return renderUserBlock(entry.text, contentWidth);
       case 'legacy_automation':
-        return renderLegacyAutomationBlock(entry.text, contentWidth);
+        return renderLegacyAutomationBlock(entry.text, contentWidth, locale);
       case 'goal_continuation':
-        return renderGoalContinuationBlock(entry.text, contentWidth);
+        return renderGoalContinuationBlock(entry.text, contentWidth, locale);
       case 'assistant':
         return renderAssistantBlock(entry.text, contentWidth);
       case 'thinking':
@@ -1358,10 +1395,11 @@ function transcriptEntrySignature(entry: MakaPiTranscriptEntry, width: number): 
  * `execute` has no boundary of its own and reads as Auto, as does anything
  * else this metadata ever carries.
  */
-export function permissionModeLabel(mode: string): string {
-  if (mode === 'bypass') return 'Full access';
-  if (mode === 'explore') return 'Read only';
-  return 'Auto';
+export function permissionModeLabel(mode: string, locale: UiLocale): string {
+  const copy = getTuiTranscriptCopy(locale).permissionMode;
+  if (mode === 'bypass') return copy.fullAccess;
+  if (mode === 'explore') return copy.readOnly;
+  return copy.auto;
 }
 
 export function renderMakaPiStatusLine(metadata: MakaPiTranscriptMetadata, width: number): string {
@@ -1369,7 +1407,7 @@ export function renderMakaPiStatusLine(metadata: MakaPiTranscriptMetadata, width
   const sep = ansi.dim(' · ');
   const parts: string[] = [
     ansi.bold(metadata.title),
-    ansi.dim(permissionModeLabel(metadata.permissionMode)),
+    ansi.dim(permissionModeLabel(metadata.permissionMode, metadata.uiLocale ?? 'en')),
     ansi.dim(metadata.model),
   ];
   // #1064: omit thinking:default — it is noise before the user explicitly
@@ -1385,7 +1423,7 @@ export function renderMakaPiStatusLine(metadata: MakaPiTranscriptMetadata, width
   // An autonomous goal burns tokens between prompts; it must never be
   // invisible. Terminal goals show nothing (the desktop chip hides them too).
   if (metadata.goal && isLiveGoalStatus(metadata.goal.status)) {
-    const text = goalStatusLineText(metadata.goal, Date.now());
+    const text = goalStatusLineText(metadata.goal, Date.now(), metadata.uiLocale ?? 'en');
     // paused gets warning salience: the loop stopped burning but stays armed
     // and resumable, which the user must not miss. waiting is a normal
     // transient between turns, so it stays dim like the other chrome.
@@ -1448,14 +1486,26 @@ export function renderMakaPiActivityStrip(
   const safeWidth = Math.max(1, width);
   if (metadata.providerRetry) {
     const retry = metadata.providerRetry;
+    const copy = getTuiTranscriptCopy(metadata.uiLocale ?? 'en').activity;
     const text =
       retry.phase === 'scheduled'
-        ? `Retrying in ${Math.max(1, Math.ceil(retry.delayMs / 1_000))}s (${retry.attempt}/${retry.maxAttempts})`
-        : `Retrying (${retry.attempt}/${retry.maxAttempts})`;
+        ? copy.retryingIn(
+            Math.max(1, Math.ceil(retry.delayMs / 1_000)),
+            retry.attempt,
+            retry.maxAttempts,
+          )
+        : copy.retrying(retry.attempt, retry.maxAttempts);
     return fitLine(ansi.dim(text), safeWidth);
   }
   if (metadata.turnElapsedMs === undefined) return '';
-  return fitLine(ansi.dim(`Working… ${formatElapsedDuration(metadata.turnElapsedMs)}`), safeWidth);
+  return fitLine(
+    ansi.dim(
+      getTuiTranscriptCopy(metadata.uiLocale ?? 'en').activity.working(
+        formatElapsedDuration(metadata.turnElapsedMs),
+      ),
+    ),
+    safeWidth,
+  );
 }
 
 function formatElapsedDuration(elapsedMs: number): string {
@@ -1486,7 +1536,11 @@ function formatElapsedDuration(elapsedMs: number): string {
  * turn). A trailing hint reminds the user that alt+↑ takes them back to edit.
  * Renders nothing when both queues are empty.
  */
-export function renderMakaPiPendingQueue(state: MakaPiTranscriptState, width: number): string[] {
+export function renderMakaPiPendingQueue(
+  state: MakaPiTranscriptState,
+  width: number,
+  locale: UiLocale,
+): string[] {
   if (
     state.steering.length === 0 &&
     state.followup.length === 0 &&
@@ -1508,15 +1562,16 @@ export function renderMakaPiPendingQueue(state: MakaPiTranscriptState, width: nu
       .map((entry) => entry.text),
   ];
   const lines: string[] = [];
+  const copy = getTuiTranscriptCopy(locale).queue;
   for (const text of steering) {
     lines.push(
-      fitLine(`${ansi.accent('Steering:')} ${ansi.dim(firstLinePreview(text))}`, safeWidth),
+      fitLine(`${ansi.accent(copy.steering)} ${ansi.dim(firstLinePreview(text))}`, safeWidth),
     );
   }
   for (const text of followup) {
-    lines.push(fitLine(`${ansi.dim('Queued:')} ${ansi.dim(firstLinePreview(text))}`, safeWidth));
+    lines.push(fitLine(`${ansi.dim(copy.queued)} ${ansi.dim(firstLinePreview(text))}`, safeWidth));
   }
-  lines.push(fitLine(ansi.dim('alt+↑ 取回队列以重新编辑'), safeWidth));
+  lines.push(fitLine(ansi.dim(copy.pendingQueueHint), safeWidth));
   return lines;
 }
 
@@ -1706,13 +1761,14 @@ function pushShellRunSettledNotice(state: MakaPiTranscriptState, entry: MakaPiTo
   if (!result) return;
   const failed =
     result.status === 'failed' || result.status === 'timed_out' || result.status === 'orphaned';
+  const copy = getTuiTranscriptCopy(state.uiLocale).background;
   const verb =
     result.status === 'completed'
-      ? 'completed'
+      ? copy.completed
       : result.status === 'cancelled'
-        ? 'stopped'
+        ? copy.stopped
         : result.status === 'timed_out'
-          ? 'timed out'
+          ? copy.timedOut
           : result.status;
   const parts: string[] = [];
   if (result.exitCode !== undefined) parts.push(`exit ${result.exitCode}`);
@@ -1724,7 +1780,7 @@ function pushShellRunSettledNotice(state: MakaPiTranscriptState, entry: MakaPiTo
   state.entries.push({
     kind: 'notice',
     level: failed ? 'error' : 'info',
-    text: `Background task ${verb}: ${result.cmd.split('\n', 1)[0]}${suffix}${failure}`,
+    text: copy.task(verb, result.cmd.split('\n', 1)[0], suffix, failure),
   });
 }
 
@@ -1752,12 +1808,22 @@ function renderProvenanceBlock(
   ];
 }
 
-function renderLegacyAutomationBlock(text: string, width: number): string[] {
-  return renderProvenanceBlock('Legacy Automation (history only)', false, text, width);
+function renderLegacyAutomationBlock(text: string, width: number, locale: UiLocale): string[] {
+  return renderProvenanceBlock(
+    getTuiTranscriptCopy(locale).provenance.legacyAutomation,
+    false,
+    text,
+    width,
+  );
 }
 
-function renderGoalContinuationBlock(text: string, width: number): string[] {
-  return renderProvenanceBlock('Goal continuation (autonomous)', true, text, width);
+function renderGoalContinuationBlock(text: string, width: number, locale: UiLocale): string[] {
+  return renderProvenanceBlock(
+    getTuiTranscriptCopy(locale).provenance.goalContinuation,
+    true,
+    text,
+    width,
+  );
 }
 
 /** An assistant turn: bare markdown prose, no speaker label or indent. */
@@ -1822,20 +1888,22 @@ function renderWelcomeBlock(width: number, locale: UiLocale): string[] {
 function renderSandboxBoundaryPrompt(
   request: SandboxBoundaryRequestEvent,
   width: number,
+  locale: UiLocale,
 ): string[] {
+  const copy = getTuiTranscriptCopy(locale).sandbox;
   const lines = [
-    fitLine(ansi.yellow('Allow access outside the workspace?'), width),
+    fitLine(ansi.yellow(copy.allowPrompt), width),
     ...renderIndented(request.justification, width, 2),
   ];
   for (const entry of request.expansion.filesystem?.entries ?? []) {
     lines.push(...renderIndented(`${entry.access} ${entry.scope} ${entry.path}`, width, 2));
   }
   if (request.expansion.network?.enabled) {
-    lines.push(...renderIndented('network enabled', width, 2));
+    lines.push(...renderIndented(copy.networkEnabled, width, 2));
   }
   lines.push(
     fitLine(
-      `${ansi.bold('y')}${ansi.dim('/Enter allow for this task')}  ${ansi.bold('n')}${ansi.dim('/Esc deny')}`,
+      `${ansi.bold('y')}${ansi.dim(copy.allowHint)}  ${ansi.bold('n')}${ansi.dim(copy.denyHint)}`,
       width,
     ),
   );

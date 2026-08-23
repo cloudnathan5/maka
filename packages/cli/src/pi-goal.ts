@@ -26,9 +26,11 @@
  */
 
 import type { GoalStatus } from '@maka/core/goal';
+import type { UiLocale } from '@maka/core/ui-locale';
 import type { GoalProjection } from '@maka/runtime-host/protocol';
 import { formatTokenCount } from './pi-transcript-format.js';
 import { stripAnsi } from './tui-ansi.js';
+import { getTuiGoalCopy } from './tui-goal-copy.js';
 
 /**
  * Statuses a watching user still cares about. Terminal goals are hidden from
@@ -38,27 +40,8 @@ export function isLiveGoalStatus(status: GoalStatus): boolean {
   return status === 'active' || status === 'waiting' || status === 'paused';
 }
 
-export function goalStatusLabel(status: GoalStatus): string {
-  switch (status) {
-    case 'active':
-      return 'active';
-    case 'waiting':
-      return 'waiting';
-    case 'paused':
-      return 'paused';
-    case 'achieved':
-      return 'achieved';
-    case 'impossible':
-      return 'impossible';
-    case 'cleared':
-      return 'cleared';
-    case 'stalled':
-      return 'stalled';
-    case 'budget_limited':
-      return 'budget limited';
-    case 'max_iterations':
-      return 'iteration limit';
-  }
+export function goalStatusLabel(status: GoalStatus, locale: UiLocale): string {
+  return getTuiGoalCopy(locale).status[status] ?? status;
 }
 
 /**
@@ -106,12 +89,13 @@ export function goalStatusLineText(
     'status' | 'iterations' | 'maxIterations' | 'setAt' | 'pausedAt' | 'achievedAt'
   >,
   now: number,
+  locale: UiLocale,
 ): string {
   const counter = `${goal.iterations}/${goal.maxIterations}`;
   if (goal.status === 'active') {
     return `goal ${counter} ${formatGoalElapsed(goalElapsedMs(goal, now))}`;
   }
-  return `goal ${goalStatusLabel(goal.status)} ${counter}`;
+  return `goal ${goalStatusLabel(goal.status, locale)} ${counter}`;
 }
 
 /** Conditions and evaluator notes may legally embed newlines; collapse whitespace so notices stay one line per field. */
@@ -129,9 +113,10 @@ function inlineGoalText(value: string): string {
  */
 export function goalPausedNoticeText(
   goal: Pick<GoalProjection, 'iterations' | 'maxIterations' | 'lastReason'>,
+  locale: UiLocale,
 ): string {
   const reason = goal.lastReason ? ` ${inlineGoalText(goal.lastReason)}` : '';
-  return `Goal paused (${goal.iterations}/${goal.maxIterations}).${reason} /goal resume continues it, /goal clear stops it.`;
+  return getTuiGoalCopy(locale).pausedNotice(goal.iterations, goal.maxIterations, reason);
 }
 
 /**
@@ -140,15 +125,21 @@ export function goalPausedNoticeText(
  */
 export function goalAttachedNoticeText(
   goal: Pick<GoalProjection, 'condition' | 'iterations' | 'maxIterations'>,
+  locale: UiLocale,
 ): string {
   const condition = inlineGoalText(goal.condition);
   const short = condition.length > 120 ? `${condition.slice(0, 119)}…` : condition;
-  return `Autonomous goal is running (${goal.iterations}/${goal.maxIterations}): ${short} — /goal shows details, /goal pause pauses it.`;
+  return getTuiGoalCopy(locale).attachedNotice(goal.iterations, goal.maxIterations, short);
 }
 
 /** Full `/goal` summary. Terminal goals are as welcome here as live ones. */
-export function goalSummaryLines(goal: GoalProjection, now: number): string[] {
-  const status = `Status: ${goalStatusLabel(goal.status)} · ${goal.iterations}/${goal.maxIterations} iterations`;
+export function goalSummaryLines(goal: GoalProjection, now: number, locale: UiLocale): string[] {
+  const copy = getTuiGoalCopy(locale);
+  const status = copy.summary.statusLine(
+    goalStatusLabel(goal.status, locale),
+    goal.iterations,
+    goal.maxIterations,
+  );
   // Terminal verdicts other than `achieved` carry no freeze timestamp, so a
   // wall-clock elapsed would keep growing for a loop that already ended.
   const elapsedMeaningful =
@@ -157,17 +148,20 @@ export function goalSummaryLines(goal: GoalProjection, now: number): string[] {
     // A cleared goal keeps its terminal record, so say "cleared" up front
     // instead of presenting the condition as if it were still armed.
     goal.status === 'cleared'
-      ? `Cleared goal: ${inlineGoalText(goal.condition)}`
-      : `Goal: ${inlineGoalText(goal.condition)}`,
+      ? copy.summary.clearedGoal(inlineGoalText(goal.condition))
+      : copy.summary.goal(inlineGoalText(goal.condition)),
     elapsedMeaningful ? `${status} · ${formatGoalElapsed(goalElapsedMs(goal, now))}` : status,
   ];
   if (goal.tokenBudget !== null) {
     lines.push(
-      `Tokens: ${formatTokenCount(goal.tokensSpent)} / ${formatTokenCount(goal.tokenBudget)}`,
+      copy.summary.tokensWithBudget(
+        formatTokenCount(goal.tokensSpent),
+        formatTokenCount(goal.tokenBudget),
+      ),
     );
   } else if (goal.tokensSpent > 0) {
-    lines.push(`Tokens: ${formatTokenCount(goal.tokensSpent)}`);
+    lines.push(copy.summary.tokens(formatTokenCount(goal.tokensSpent)));
   }
-  if (goal.lastReason) lines.push(`Last evaluator note: ${inlineGoalText(goal.lastReason)}`);
+  if (goal.lastReason) lines.push(copy.summary.lastEvaluatorNote(inlineGoalText(goal.lastReason)));
   return lines;
 }

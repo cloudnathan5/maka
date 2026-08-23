@@ -39,7 +39,10 @@ import type { PermissionMode } from '@maka/core/permission';
 import type { ThinkingLevel } from '@maka/core/model-thinking';
 import type { InvocableSkillEntry } from '@maka/runtime/skill-invocation';
 import { PROVIDER_DEFAULTS, type ModelInfo, type ProviderType } from '@maka/core/llm-connections';
+import type { UiLocale } from '@maka/core/ui-locale';
 import type { ModelChoice, OnboardingProviderEntry } from './pi-tui-contracts.js';
+import { getTuiOnboardingCopy } from './tui-onboarding-copy.js';
+import { getTuiPickerCopy } from './tui-picker-copy.js';
 import { ansi, editorTheme, selectListTheme, stripAnsi } from './tui-ansi.js';
 
 export class MakaAutocompleteProvider implements AutocompleteProvider {
@@ -342,6 +345,7 @@ export class PickerOverlay implements Component {
     private readonly input: {
       title: string;
       rightLabel: string;
+      locale: UiLocale;
       hint?: string;
       notice?: string;
       onInput?: (data: string) => boolean;
@@ -361,7 +365,10 @@ export class PickerOverlay implements Component {
     const safeWidth = Math.max(1, width);
     return [
       padLine(`${this.input.title} ${ansi.accent(this.input.rightLabel)}`, safeWidth),
-      padLine(ansi.dim(this.input.hint ?? 'enter select / esc close'), safeWidth),
+      padLine(
+        ansi.dim(this.input.hint ?? getTuiPickerCopy(this.input.locale).chrome.selectHint),
+        safeWidth,
+      ),
       ...(this.input.notice ? [padLine(ansi.yellow(this.input.notice), safeWidth)] : []),
       padLine('', safeWidth),
       ...this.list.render(safeWidth).map((line) => formatPickerItemLine(line, safeWidth)),
@@ -378,6 +385,7 @@ export class DirectoryPickerOverlay implements Component {
     private readonly input: {
       currentCwd: string;
       basePath: string;
+      locale: UiLocale;
       onSubmit: (cwd: string) => void;
       onCancel: () => void;
     },
@@ -405,13 +413,14 @@ export class DirectoryPickerOverlay implements Component {
   render(width: number): string[] {
     const safeWidth = Math.max(1, width);
     this.editor.focused = true;
-    const label = 'Directory ';
+    const copy = getTuiPickerCopy(this.input.locale).move;
+    const label = copy.directoryLabel;
     const labelWidth = visibleWidth(label);
     const editorLines = this.editor.render(Math.max(1, safeWidth - labelWidth)).slice(1, -1);
     return [
-      padLine('Move Session', safeWidth),
-      padLine(ansi.dim('Type a directory · Tab complete · Enter confirm · Esc cancel'), safeWidth),
-      padLine(ansi.dim(`Current: ${this.input.currentCwd}`), safeWidth),
+      padLine(copy.title, safeWidth),
+      padLine(ansi.dim(copy.hint), safeWidth),
+      padLine(ansi.dim(copy.current(this.input.currentCwd)), safeWidth),
       padLine('', safeWidth),
       ...(editorLines.length > 0
         ? editorLines.map((line, index) =>
@@ -627,14 +636,16 @@ function matchesModelChoice(choice: ModelChoice, query: string): boolean {
 
 export interface ModelSearchOverlayInput {
   choices: readonly ModelChoice[];
+  locale: UiLocale;
   current: { model: string; connectionSlug: string };
   showCacheWarning?: boolean;
   onSelect: (choice: ModelChoice) => void;
   onCancel: () => void;
 }
 
-export const MODEL_SWITCH_CACHE_WARNING =
-  '⚠ 切换模型可能需要重建提示缓存；下一次请求可能更慢或成本更高。';
+export function modelSwitchCacheWarning(locale: UiLocale): string {
+  return getTuiPickerCopy(locale).model.cacheWarning;
+}
 
 /**
  * One bottom search field + a bounded single-select list, for the cross-
@@ -719,18 +730,17 @@ export class ModelSearchOverlay implements Component {
 
   render(width: number): string[] {
     const safeWidth = Math.max(1, width);
+    const copy = getTuiPickerCopy(this.input.locale).model;
     this.searchEditor.focused = true;
     return [
-      padLine(`Select Model ${ansi.accent(String(this.filtered.length))}`, safeWidth),
-      padLine(ansi.dim('搜索模型 / 服务商 / 连接 · ↑↓ 选择 · Enter 确认 · Esc 取消'), safeWidth),
-      ...(this.input.showCacheWarning
-        ? [padLine(ansi.yellow(MODEL_SWITCH_CACHE_WARNING), safeWidth)]
-        : []),
+      padLine(`${copy.title} ${ansi.accent(String(this.filtered.length))}`, safeWidth),
+      padLine(ansi.dim(copy.hint), safeWidth),
+      ...(this.input.showCacheWarning ? [padLine(ansi.yellow(copy.cacheWarning), safeWidth)] : []),
       padLine('', safeWidth),
-      ...this.renderFieldRow(this.searchEditor, '搜索', safeWidth),
+      ...this.renderFieldRow(this.searchEditor, copy.searchLabel, safeWidth),
       padLine('', safeWidth),
       ...(this.filtered.length === 0
-        ? [padLine(ansi.dim('没有匹配的模型'), safeWidth)]
+        ? [padLine(ansi.dim(copy.empty), safeWidth)]
         : this.list.render(safeWidth).map((line) => formatPickerItemLine(line, safeWidth))),
       padLine(ansi.accent('-'.repeat(safeWidth)), safeWidth),
     ];
@@ -756,21 +766,27 @@ export class ModelSearchOverlay implements Component {
  * Auto as current there turned "confirm what I already have" into a silent
  * widening of the boundary.
  */
-export function permissionModePickerItems(currentMode: PermissionMode): SelectItem[] {
+export function permissionModePickerItems(
+  currentMode: PermissionMode,
+  locale: UiLocale,
+): SelectItem[] {
+  const copy = getTuiPickerCopy(locale).permissions;
   const autoIsCurrent = currentMode === 'ask';
   return [
     {
       value: 'auto',
-      label: 'Auto',
-      description: autoIsCurrent ? 'current · protected' : 'protected',
+      label: copy.auto,
+      description: autoIsCurrent
+        ? `${copy.currentPrefix}${copy.protectedScope}`
+        : copy.protectedScope,
     },
     {
       value: 'bypass',
-      label: 'Full access',
+      label: copy.fullAccess,
       description:
         currentMode === 'bypass'
-          ? 'current · your files and network, unprotected'
-          : 'your files and network, unprotected',
+          ? `${copy.currentPrefix}${copy.unprotectedScope}`
+          : copy.unprotectedScope,
     },
   ];
 }
@@ -789,42 +805,36 @@ export function skillPickerItems(skills: readonly InvocableSkillEntry[]): Select
 }
 
 /** Provider search items for `/setup`, marking connections that already exist
- *  `已设置` so a re-onboard reads as edit/rotate rather than create. */
+ *  as configured so a re-onboard reads as edit/rotate rather than create. */
 export function onboardingProviderPickerItems(
   providers: readonly OnboardingProviderEntry[],
+  locale: UiLocale,
 ): SelectItem[] {
+  const configured = getTuiOnboardingCopy(locale).configured;
   return providers.map((provider) => ({
     value: provider.providerType,
     label: provider.label,
     description: provider.hasConnection
-      ? `${provider.providerType} · 已设置`
+      ? `${provider.providerType} · ${configured}`
       : provider.providerType,
   }));
 }
 
-const THINKING_LEVEL_LABELS: Record<ThinkingLevel, string> = {
-  off: '关',
-  minimal: '最小',
-  low: '低',
-  medium: '中',
-  high: '高',
-  xhigh: '超高',
-  max: '最高',
-};
-
 export function thinkingLevelPickerItems(
   levels: readonly ThinkingLevel[],
   current: ThinkingLevel | undefined,
+  locale: UiLocale,
 ): SelectItem[] {
+  const copy = getTuiPickerCopy(locale).thinking;
   return [
     {
       value: 'default',
-      label: '默认',
+      label: copy.default,
       ...(current === undefined ? { description: 'current' } : {}),
     },
     ...levels.map((level) => ({
       value: level,
-      label: THINKING_LEVEL_LABELS[level],
+      label: copy.levels[level] ?? level,
       ...(level === current ? { description: 'current' } : {}),
     })),
   ];
@@ -851,6 +861,7 @@ export type OnboardingWizardStatus =
 
 export interface OnboardingWizardInput {
   providers: readonly OnboardingProviderEntry[];
+  locale: UiLocale;
   /** search→key: the user picked a provider. The runner records it for verify/save. */
   onPickProvider: (providerType: ProviderType) => void;
   /** key submit. The value may be empty — an existing connection reuses the stored
@@ -919,7 +930,7 @@ export class OnboardingWizard implements Component {
 
   private buildList(): SelectList {
     const list = new SelectList(
-      onboardingProviderPickerItems(this.filtered),
+      onboardingProviderPickerItems(this.filtered, this.input.locale),
       10,
       selectListTheme(),
       { minPrimaryColumnWidth: 16, maxPrimaryColumnWidth: 32 },
@@ -1128,7 +1139,10 @@ export class OnboardingWizard implements Component {
     if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
       if (isKeyRepeat(data)) return;
       if (this.selectedIds.size === 0) {
-        this.status = { kind: 'error', text: '至少选择一个模型再保存' };
+        this.status = {
+          kind: 'error',
+          text: getTuiOnboardingCopy(this.input.locale).selectAtLeastOneModel,
+        };
         return;
       }
       this.input.onSubmitModels([...this.selectedIds]);
@@ -1168,7 +1182,7 @@ export class OnboardingWizard implements Component {
     if (!model) return;
     if (this.selectedIds.has(model.id)) this.selectedIds.delete(model.id);
     else this.selectedIds.add(model.id);
-    // Clear a stale "至少选择一个模型" error once a selection exists.
+    // Clear a stale "select at least one model" error once a selection exists.
     if (this.status.kind === 'error' && this.selectedIds.size > 0) {
       this.status = { kind: 'prompt' };
     }
@@ -1189,38 +1203,38 @@ export class OnboardingWizard implements Component {
   }
 
   private renderSearch(width: number): string[] {
+    const copy = getTuiOnboardingCopy(this.input.locale);
     this.searchEditor.focused = true;
     this.keyEditor.focused = false;
     this.modelsSearchEditor.focused = false;
     return [
       padLine(
-        `Set Up Provider ${ansi.dim('· 1/3')} ${ansi.accent(String(this.filtered.length))}`,
+        `${copy.title} ${ansi.dim(copy.step(1, 3))} ${ansi.accent(String(this.filtered.length))}`,
         width,
       ),
-      padLine(ansi.dim('搜索服务商，↑↓ 选择 · Enter 确认 · Esc 取消'), width),
+      padLine(ansi.dim(copy.searchHint), width),
       padLine('', width),
-      ...this.renderFieldRow(this.searchEditor, '搜索', width),
+      ...this.renderFieldRow(this.searchEditor, copy.searchLabel, width),
       padLine('', width),
       ...(this.filtered.length === 0
-        ? [padLine(ansi.dim('没有匹配的服务商'), width)]
+        ? [padLine(ansi.dim(copy.noProviders), width)]
         : this.list.render(width).map((line) => formatPickerItemLine(line, width))),
       padLine(ansi.accent('-'.repeat(width)), width),
     ];
   }
 
   private renderKey(width: number): string[] {
+    const copy = getTuiOnboardingCopy(this.input.locale);
     this.searchEditor.focused = false;
     this.keyEditor.focused = this.status.kind === 'prompt' || this.status.kind === 'error';
     this.modelsSearchEditor.focused = false;
     const label = this.picked?.label ?? '';
-    const hint = this.picked?.hasConnection
-      ? '留空复用已保存的 key，或输入新 key 轮换 · Esc 返回选择服务商'
-      : '输入 API key · 仅本机存储 · Esc 返回选择服务商';
+    const hint = this.picked?.hasConnection ? copy.keyHintRotate : copy.keyHintNew;
     return [
-      padLine(`Set Up Provider ${ansi.dim('· 2/3')} ${ansi.accent(label)}`, width),
+      padLine(`${copy.title} ${ansi.dim(copy.step(2, 3))} ${ansi.accent(label)}`, width),
       padLine(ansi.dim(hint), width),
       padLine('', width),
-      ...this.renderFieldRow(this.keyEditor, 'API key', width),
+      ...this.renderFieldRow(this.keyEditor, copy.apiKeyLabel, width),
       padLine('', width),
       padLine(this.renderKeyStatusLine(), width),
       padLine(ansi.accent('-'.repeat(width)), width),
@@ -1228,32 +1242,34 @@ export class OnboardingWizard implements Component {
   }
 
   private renderKeyStatusLine(): string {
+    const copy = getTuiOnboardingCopy(this.input.locale);
     switch (this.status.kind) {
       case 'prompt':
-        return ansi.dim('Enter 提交');
+        return ansi.dim(copy.enterSubmit);
       case 'verifying':
-        return `${ansi.yellow('⠋')} 正在验证 key…`;
+        return `${ansi.yellow('⠋')} ${copy.verifyingKey}`;
       case 'error':
         return ansi.red(`✗ ${this.status.text}`);
       case 'saving':
-        return ansi.dim('Enter 提交');
+        return ansi.dim(copy.enterSubmit);
     }
   }
 
   private renderModels(width: number): string[] {
+    const copy = getTuiOnboardingCopy(this.input.locale);
     this.searchEditor.focused = false;
     this.keyEditor.focused = false;
     this.modelsSearchEditor.focused = this.status.kind !== 'saving';
     const label = this.picked?.label ?? '';
     const lines = [
-      padLine(`Set Up Provider ${ansi.dim('· 3/3')} ${ansi.accent(label)}`, width),
-      padLine(ansi.dim('搜索模型，↑↓ 选择 · Space 切换 · Enter 保存 · Esc 返回'), width),
+      padLine(`${copy.title} ${ansi.dim(copy.step(3, 3))} ${ansi.accent(label)}`, width),
+      padLine(ansi.dim(copy.modelsHint), width),
       padLine('', width),
-      ...this.renderFieldRow(this.modelsSearchEditor, '搜索', width),
+      ...this.renderFieldRow(this.modelsSearchEditor, copy.searchLabel, width),
       padLine('', width),
     ];
     if (this.filteredModels.length === 0) {
-      lines.push(padLine(ansi.dim('没有匹配的模型'), width));
+      lines.push(padLine(ansi.dim(copy.noModels), width));
     } else {
       const end = Math.min(
         this.modelScroll + ONBOARDING_MODELS_MAX_VISIBLE,
@@ -1274,28 +1290,30 @@ export class OnboardingWizard implements Component {
   }
 
   private renderModelsStatusLine(): string {
+    const copy = getTuiOnboardingCopy(this.input.locale);
     switch (this.status.kind) {
       case 'prompt':
-        return ansi.dim(`已选 ${this.selectedIds.size} · Enter 保存`);
+        return ansi.dim(copy.selectedWithSave(this.selectedIds.size));
       case 'verifying':
-        return ansi.dim(`已选 ${this.selectedIds.size}`);
+        return ansi.dim(copy.selected(this.selectedIds.size));
       case 'saving':
-        return `${ansi.yellow('⠋')} 正在保存…`;
+        return `${ansi.yellow('⠋')} ${copy.saving}`;
       case 'error':
         return ansi.red(`✗ ${this.status.text}`);
     }
   }
 
   private renderSuccess(width: number): string[] {
+    const copy = getTuiOnboardingCopy(this.input.locale);
     this.searchEditor.focused = false;
     this.keyEditor.focused = false;
     this.modelsSearchEditor.focused = false;
     const label = this.picked?.label ?? '';
     return [
-      padLine(`Set Up Provider ${ansi.dim('· 完成')} ${ansi.accent(label)}`, width),
-      padLine(ansi.green(`✓ 已启用 ${this.successCount} 个模型`), width),
+      padLine(`${copy.title} ${ansi.dim(`· ${copy.doneStep}`)} ${ansi.accent(label)}`, width),
+      padLine(ansi.green(copy.enabledModels(this.successCount)), width),
       padLine('', width),
-      padLine(ansi.dim('Enter 关闭'), width),
+      padLine(ansi.dim(copy.enterClose), width),
       padLine(ansi.accent('-'.repeat(width)), width),
     ];
   }

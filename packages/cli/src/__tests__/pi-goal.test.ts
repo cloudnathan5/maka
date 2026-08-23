@@ -64,8 +64,8 @@ describe('pi-goal display helpers', () => {
     // Exhaustiveness guard: a new GoalStatus must make a deliberate choice in
     // both places instead of silently falling through.
     for (const status of GOAL_STATUSES) {
-      assert.equal(typeof goalStatusLabel(status), 'string', status);
-      assert.notEqual(goalStatusLabel(status), '', status);
+      assert.equal(typeof goalStatusLabel(status, 'en'), 'string', status);
+      assert.notEqual(goalStatusLabel(status, 'en'), '', status);
       assert.equal(typeof isLiveGoalStatus(status), 'boolean', status);
     }
     assert.deepEqual(
@@ -91,16 +91,16 @@ describe('pi-goal display helpers', () => {
 
   test('status-line text: active shows elapsed, waiting and paused show the state name', () => {
     const now = 61_000;
-    assert.equal(goalStatusLineText(goal({ setAt: 1_000 }), now), 'goal 3/50 1m');
-    assert.equal(goalStatusLineText(goal({ status: 'waiting' }), now), 'goal waiting 3/50');
+    assert.equal(goalStatusLineText(goal({ setAt: 1_000 }), now, 'en'), 'goal 3/50 1m');
+    assert.equal(goalStatusLineText(goal({ status: 'waiting' }), now, 'en'), 'goal waiting 3/50');
     assert.equal(
-      goalStatusLineText(goal({ status: 'paused', pausedAt: 31_000 }), now),
+      goalStatusLineText(goal({ status: 'paused', pausedAt: 31_000 }), now, 'en'),
       'goal paused 3/50',
     );
   });
 
   test('summary lines include budget only when set and the evaluator note only when present', () => {
-    const plain = goalSummaryLines(goal(), 61_000);
+    const plain = goalSummaryLines(goal(), 61_000, 'en');
     assert.equal(plain.length, 2);
     assert.match(plain[0]!, /^Goal: Ship the feature$/);
     assert.match(plain[1]!, /active · 3\/50 iterations · 1m$/);
@@ -108,6 +108,7 @@ describe('pi-goal display helpers', () => {
     const detailed = goalSummaryLines(
       goal({ tokenBudget: 100_000, tokensSpent: 45_200, lastReason: 'tests still failing' }),
       61_000,
+      'en',
     );
     assert.deepEqual(detailed.slice(2), [
       'Tokens: 45k / 100k',
@@ -119,6 +120,7 @@ describe('pi-goal display helpers', () => {
     const messy = goalSummaryLines(
       goal({ condition: 'Ship the\n  feature', lastReason: 'line one\nline   two' }),
       61_000,
+      'en',
     );
     assert.equal(messy[0], 'Goal: Ship the feature');
     assert.equal(messy.at(-1), 'Last evaluator note: line one line two');
@@ -129,6 +131,7 @@ describe('pi-goal display helpers', () => {
         lastReason: 'safe\x1b]0;spoofed title\x07\nUnicode ✓',
       }),
       61_000,
+      'en',
     );
     assert.equal(hostile[0], 'Goal: Ship the feature');
     assert.equal(hostile.at(-1), 'Last evaluator note: safe Unicode ✓');
@@ -138,7 +141,7 @@ describe('pi-goal display helpers', () => {
 
     // A cleared goal keeps its terminal record; the summary must not present
     // the condition as if it were still armed.
-    const cleared = goalSummaryLines(goal({ status: 'cleared' }), 61_000);
+    const cleared = goalSummaryLines(goal({ status: 'cleared' }), 61_000, 'en');
     assert.equal(cleared[0], 'Cleared goal: Ship the feature');
     assert.match(cleared[1]!, /^Status: cleared /);
   });
@@ -152,13 +155,13 @@ describe('pi-goal display helpers', () => {
       'max_iterations',
     ] as const;
     for (const status of terminal) {
-      const lines = goalSummaryLines(goal({ status }), 61_000);
-      assert.equal(lines[1], `Status: ${goalStatusLabel(status)} · 3/50 iterations`, status);
+      const lines = goalSummaryLines(goal({ status }), 61_000, 'en');
+      assert.equal(lines[1], `Status: ${goalStatusLabel(status, 'en')} · 3/50 iterations`, status);
     }
   });
 
   test('summary keeps the frozen elapsed for an achieved goal', () => {
-    const lines = goalSummaryLines(goal({ status: 'achieved', achievedAt: 61_000 }), 600_000);
+    const lines = goalSummaryLines(goal({ status: 'achieved', achievedAt: 61_000 }), 600_000, 'en');
     assert.match(lines[1]!, /achieved · 3\/50 iterations · 1m$/);
   });
 
@@ -168,20 +171,20 @@ describe('pi-goal display helpers', () => {
 
   test('pause and attach notices name the loop and its controls', () => {
     assert.equal(
-      goalPausedNoticeText(goal({ lastReason: 'Goal-associated turn was aborted.' })),
+      goalPausedNoticeText(goal({ lastReason: 'Goal-associated turn was aborted.' }), 'en'),
       'Goal paused (3/50). Goal-associated turn was aborted. /goal resume continues it, /goal clear stops it.',
     );
     assert.equal(
-      goalPausedNoticeText(goal({ lastReason: null })),
+      goalPausedNoticeText(goal({ lastReason: null }), 'en'),
       'Goal paused (3/50). /goal resume continues it, /goal clear stops it.',
     );
     // Embedded newlines collapse so the notice stays one line.
     assert.equal(
-      goalAttachedNoticeText(goal({ condition: 'Ship the\n  feature' })),
+      goalAttachedNoticeText(goal({ condition: 'Ship the\n  feature' }), 'en'),
       'Autonomous goal is running (3/50): Ship the feature — /goal shows details, /goal pause pauses it.',
     );
     // Long conditions are capped with an ellipsis.
-    const long = goalAttachedNoticeText(goal({ condition: 'x'.repeat(200) }));
+    const long = goalAttachedNoticeText(goal({ condition: 'x'.repeat(200) }), 'en');
     assert.ok(long.includes('…') && long.length <= 210);
   });
 });

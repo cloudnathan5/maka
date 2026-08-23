@@ -28,7 +28,9 @@ import { listApiKeyOnboardableProviders } from './onboarding-catalog.js';
 import type {
   MakaOnboardingSurface,
   ModelChoice,
+  OnboardingFailure,
   OnboardingProviderEntry,
+  OnboardingRejectionReason,
 } from './pi-tui-contracts.js';
 
 /** Adapt the TUI onboarding workflow to Host-owned verification and persistence. */
@@ -45,9 +47,9 @@ export function createRuntimeHostOnboardingSurface(
         });
         return result.kind === 'verified'
           ? { kind: 'ok', models: [...result.models] }
-          : { kind: 'error', text: onboardingFailureText(result) };
+          : { kind: 'error', failure: onboardingFailure(result) };
       } catch (error) {
-        return { kind: 'error', text: errorText(error) };
+        return { kind: 'error', failure: { kind: 'transport', detail: errorText(error) } };
       }
     },
     save: async (input) => {
@@ -58,7 +60,7 @@ export function createRuntimeHostOnboardingSurface(
           enabledModelIds: [...input.enabledModelIds],
         });
         if (result.kind !== 'saved') {
-          return { kind: 'error', text: onboardingFailureText(result) };
+          return { kind: 'error', failure: onboardingFailure(result) };
         }
         return {
           kind: 'ok',
@@ -67,7 +69,7 @@ export function createRuntimeHostOnboardingSurface(
           ),
         };
       } catch (error) {
-        return { kind: 'error', text: errorText(error) };
+        return { kind: 'error', failure: { kind: 'transport', detail: errorText(error) } };
       }
     },
   };
@@ -119,23 +121,30 @@ function normalizedSecret(value: string | undefined): string | null {
   return secret.length === 0 ? null : secret;
 }
 
-function onboardingFailureText(input: {
+/**
+ * Translate a Host onboarding outcome into a stable code. Presentation is the
+ * TUI catalog's job (`onboardingFailureCopy`); nothing here is user-visible.
+ */
+function onboardingFailure(input: {
   readonly kind: 'rejected' | 'failed';
   readonly reason?: string;
   readonly errorClass?: string;
-}): string {
-  if (input.kind === 'failed') return `Connection verification failed: ${input.errorClass}`;
-  switch (input.reason) {
+}): OnboardingFailure {
+  if (input.kind === 'failed') {
+    return { kind: 'verification_failed', errorClass: input.errorClass ?? 'unknown' };
+  }
+  return { kind: 'rejected', reason: rejectionReason(input.reason) };
+}
+
+function rejectionReason(reason: string | undefined): OnboardingRejectionReason {
+  switch (reason) {
     case 'credential_not_configured':
-      return 'API key is required';
     case 'provider_unsupported':
-      return 'This provider does not support API-key onboarding';
     case 'slug_conflict':
-      return 'The provider connection name is already used by another provider';
     case 'model_unavailable':
-      return 'The selected model is no longer available';
+      return reason;
     default:
-      return 'Connection onboarding was rejected';
+      return 'unknown';
   }
 }
 
